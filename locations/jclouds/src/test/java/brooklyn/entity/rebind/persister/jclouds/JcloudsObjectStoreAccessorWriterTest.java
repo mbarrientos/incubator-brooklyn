@@ -16,7 +16,7 @@ import brooklyn.management.ha.HighAvailabilityMode;
 import brooklyn.test.entity.LocalManagementContextForTests;
 import brooklyn.util.text.Identifiers;
 
-@Test(groups="Integration")
+@Test(groups={"Live", "Live-sanity"})
 public class JcloudsObjectStoreAccessorWriterTest extends PersistenceStoreObjectAccessorWriterTestFixture {
 
     private JcloudsBlobStoreBasedObjectStore store;
@@ -27,7 +27,7 @@ public class JcloudsObjectStoreAccessorWriterTest extends PersistenceStoreObject
         store = new JcloudsBlobStoreBasedObjectStore(
             BlobStoreTest.PERSIST_TO_OBJECT_STORE_FOR_TEST_SPEC, BlobStoreTest.CONTAINER_PREFIX+"-"+Identifiers.makeRandomId(4));
         store.injectManagementContext(mgmt = new LocalManagementContextForTests(BrooklynProperties.Factory.newDefault()));
-        store.prepareForUse(PersistMode.CLEAN, HighAvailabilityMode.DISABLED);
+        store.prepareForSharedUse(PersistMode.CLEAN, HighAvailabilityMode.DISABLED);
         super.setUp();
     }
 
@@ -47,16 +47,21 @@ public class JcloudsObjectStoreAccessorWriterTest extends PersistenceStoreObject
         return 10000;
     }
     
-    @Test(groups="Integration")
+    @Test(groups={"Live", "Live-sanity"})
     @Override
     public void testWriteBacklogThenDeleteWillLeaveFileDeleted() throws Exception {
         super.testWriteBacklogThenDeleteWillLeaveFileDeleted();
     }
     
-    @Test(groups="Integration")
+    @Test(groups={"Live", "Live-sanity"})
     @Override
     public void testWritesFile() throws Exception {
         super.testWritesFile();
     }
-    
+
+    @Test(groups={"Live", "Live-sanity"})
+    @Override
+    public void testLastModifiedTime() throws Exception {
+        super.testLastModifiedTime();
+    }
 }

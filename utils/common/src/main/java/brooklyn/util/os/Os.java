@@ -38,6 +38,11 @@ public class Os {
 
     private static final Logger log = LoggerFactory.getLogger(Os.class);
     
+    private static final char SEPARATOR_UNIX = '/';
+    private static final char SEPARATOR_WIN = '\\';
+    
+    public static final String LINE_SEPARATOR = System.getProperty("line.separator");
+
     /** returns the best tmp dir to use; see {@link TmpDirFinder} for the logic
      * (and the explanation why this is needed!) */
     public static String tmp() {
@@ -180,7 +185,7 @@ public class Os {
         StringBuilder result = new StringBuilder();
         for (String item: items) {
             if (Strings.isEmpty(item)) continue;
-            if (result.length() > 0 && result.charAt(result.length()-1) != separatorChar) result.append(separatorChar);
+            if (result.length() > 0 && !isSeparator(result.codePointAt(result.length()-1))) result.append(separatorChar);
             result.append(item);
         }
         return result.toString();
@@ -447,26 +452,55 @@ public class Os {
         return result;
     }
 
+    /**
+     * Checks whether a file system path is absolute in a platform neutral way.
+     * <p>
+     * As a consequence of the platform neutrality some edge cases are
+     * not handled correctly:
+     * <ul>
+     *  <li>On Windows relative paths starting with slash (either forward or backward) or ~ are treated as absolute.
+     *  <li>On UNIX relative paths starting with X:/ are treated as absolute.
+     * </ul>
+     *
+     * @param path A string representing a file system path.
+     * @return whether the path is absolute under the above constraints.
+     */
+    public static boolean isAbsolutish(String path) {
+        return
+            path.codePointAt(0) == SEPARATOR_UNIX ||
+            path.equals("~") || path.startsWith("~" + SEPARATOR_UNIX) ||
+            path.length()>=3 && path.codePointAt(1) == ':' &&
+                                isSeparator(path.codePointAt(2));
+    }
+
+    /** @deprecated since 0.7.0, use {@link #isAbsolutish(String)} */
+    @Deprecated
     public static boolean isAbsolute(String path) {
-        if (path.startsWith(File.separator)) return true;
-        if (Os.isMicrosoftWindows()) {
-            if (path.length()>=3 && path.substring(1).startsWith(":\\"))
-                return true;
-        } else {
-            if (path.equals("~") || path.startsWith("~/")) return true;
-        }
-        return false;
+        return isAbsolutish(path);
+    }
+    
+    private static boolean isSeparator(int sep) {
+        return sep == SEPARATOR_UNIX ||
+               sep == SEPARATOR_WIN;
+    }
+    
+    public static String fromHome(String path) {
+        return new File(Os.home(), path).getAbsolutePath();
+    }
+    
+    public static String nativePath(String path) {
+        return new File(path).getPath();
     }
 
     public static boolean isMicrosoftWindows() {
-        if (System.getProperty("os.name").toLowerCase().indexOf("microsoft")>=0)
-            return true;
-        return false;
+        String os = System.getProperty("os.name").toLowerCase();
+        //see org.apache.commons.lang.SystemUtils.IS_WINDOWS
+        return os.startsWith("windows");
     }
 
     /** creates a private temp file which will be deleted on exit;
      * either prefix or ext may be null; 
-     * if ext does not start with a . and is <= 4 chars in length, a dot will be inserted */
+     * if ext is non-empty and not > 4 chars and not starting with a ., then a dot will be inserted */
     public static File newTempFile(String prefix, String ext) {
         String baseName = (prefix!=null ? prefix + "-" : "") + Identifiers.makeRandomId(4) + 
             (ext!=null ? ext.startsWith(".") || ext.length()>4 ? ext : "."+ext : "");
@@ -489,7 +523,7 @@ public class Os {
 
     /** creates a temp dir which will be deleted on exit */
     public static File newTempDir(String prefix) {
-        String baseName = (prefix==null ? "" : prefix + "-") + "-" + Identifiers.makeRandomId(4);
+        String baseName = (prefix==null ? "" : prefix + "-") + Identifiers.makeRandomId(4);
         File tempDir = new File(tmp(), baseName);
         if (tempDir.mkdir()) {
             Os.deleteOnExitRecursively(tempDir);

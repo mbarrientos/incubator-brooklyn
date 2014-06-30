@@ -37,6 +37,8 @@ import brooklyn.management.ExecutionManager;
 import brooklyn.management.LocationManager;
 import brooklyn.management.SubscriptionContext;
 import brooklyn.management.Task;
+import brooklyn.management.entitlement.EntitlementManager;
+import brooklyn.management.entitlement.Entitlements;
 import brooklyn.management.ha.HighAvailabilityManager;
 import brooklyn.management.ha.HighAvailabilityMode;
 import brooklyn.management.ha.ManagementNodeState;
@@ -46,7 +48,7 @@ import brooklyn.mementos.BrooklynMementoPersister;
 import brooklyn.util.guava.Maybe;
 import brooklyn.util.time.Duration;
 
-import com.google.common.base.Function;
+import com.google.common.base.Objects;
 
 public class NonDeploymentManagementContext implements ManagementContextInternal {
 
@@ -73,6 +75,7 @@ public class NonDeploymentManagementContext implements ManagementContextInternal
     private NonDeploymentLocationManager locationManager;
     private NonDeploymentAccessManager accessManager;
     private NonDeploymentUsageManager usageManager;
+    private EntitlementManager entitlementManager;;
 
     public NonDeploymentManagementContext(AbstractEntity entity, NonDeploymentManagementContextMode mode) {
         this.entity = checkNotNull(entity, "entity");
@@ -83,6 +86,10 @@ public class NonDeploymentManagementContext implements ManagementContextInternal
         locationManager = new NonDeploymentLocationManager(null);
         accessManager = new NonDeploymentAccessManager(null);
         usageManager = new NonDeploymentUsageManager(null);
+        
+        // TODO might need to be some kind of "system" which can see that the system is running at this point
+        // though quite possibly we are entirely behind the auth-wall at this point
+        entitlementManager = Entitlements.minimal();
     }
 
     @Override
@@ -110,7 +117,7 @@ public class NonDeploymentManagementContext implements ManagementContextInternal
 
     @Override
     public String toString() {
-        return super.toString()+"["+entity+";"+mode+"]";
+        return Objects.toStringHelper(this).add("entity", entity.getId()).add("mode", mode).toString();
     }
     
     public void setMode(NonDeploymentManagementContextMode mode) {
@@ -262,6 +269,11 @@ public class NonDeploymentManagementContext implements ManagementContextInternal
     public BrooklynCatalog getCatalog() {
         checkInitialManagementContextReal();
         return initialManagementContext.getCatalog();
+    }
+    
+    @Override
+    public EntitlementManager getEntitlementManager() {
+        return entitlementManager;
     }
     
     @Override
@@ -417,7 +429,12 @@ public class NonDeploymentManagementContext implements ManagementContextInternal
         public void waitForPendingComplete(long timeout, TimeUnit unit) throws InterruptedException, TimeoutException {
             throw new IllegalStateException("Non-deployment context "+NonDeploymentManagementContext.this+" is not valid for this operation.");
         }
+        @Override
         public void waitForPendingComplete(Duration timeout) throws InterruptedException, TimeoutException {
+            throw new IllegalStateException("Non-deployment context "+NonDeploymentManagementContext.this+" is not valid for this operation.");
+        }
+        @Override
+        public void forcePersistNow() {
             throw new IllegalStateException("Non-deployment context "+NonDeploymentManagementContext.this+" is not valid for this operation.");
         }
     }

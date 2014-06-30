@@ -22,6 +22,7 @@ import brooklyn.config.ConfigKey.HasConfigKey;
 import brooklyn.event.basic.BasicConfigKey;
 import brooklyn.util.ResourceUtils;
 import brooklyn.util.collections.MutableMap;
+import brooklyn.util.config.ConfigBag;
 import brooklyn.util.flags.TypeCoercions;
 import brooklyn.util.guava.Maybe;
 import brooklyn.util.os.Os;
@@ -58,8 +59,8 @@ public class BrooklynProperties extends LinkedHashMap implements StringConfigMap
 
         public static class Builder {
             private String defaultLocationMetadataUrl = "classpath://brooklyn/location-metadata.properties";
-            private String globalLocationMetadataFile = Os.mergePaths("~", ".brooklyn", "location-metadata.properties");
-            private String globalPropertiesFile = Os.mergePaths("~", ".brooklyn", "brooklyn.properties");
+            private String globalLocationMetadataFile = Os.mergePaths(Os.home(), ".brooklyn", "location-metadata.properties");
+            private String globalPropertiesFile = Os.mergePaths(Os.home(), ".brooklyn", "brooklyn.properties");
             private String localPropertiesFile = null;
             private BrooklynProperties originalProperties = null;
             
@@ -177,6 +178,11 @@ public class BrooklynProperties extends LinkedHashMap implements StringConfigMap
 
     public BrooklynProperties addSystemProperties() {
         putAll(System.getProperties());
+        return this;
+    }
+
+    public BrooklynProperties addFrom(ConfigBag cfg) {
+        putAll(cfg.getAllConfig());
         return this;
     }
 

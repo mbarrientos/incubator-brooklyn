@@ -254,6 +254,10 @@ public abstract class AbstractSoftwareProcessSshDriver extends AbstractSoftwareP
             flags.putAll(getSshFlags());
         flags.putAll(flags2);
         Map<String, String> environment = (Map<String, String>) ((flags.get("env") != null) ? flags.get("env") : getShellEnvironment());
+        if (environment!=null && Tasks.current()!=null) {
+            // attach tags here, as well as in ScriptHelper, because they may have just been read from the driver
+            Tasks.addTagDynamically(BrooklynTaskTags.tagForEnvStream(BrooklynTaskTags.STREAM_ENV, environment));
+        }
         if (!flags.containsKey("logPrefix")) flags.put("logPrefix", ""+entity.getId()+"@"+getLocation().getDisplayName());
         return getMachine().execScript(flags, summaryForLogging, script, environment);
     }
@@ -297,7 +301,7 @@ public abstract class AbstractSoftwareProcessSshDriver extends AbstractSoftwareP
     public int copyTemplate(String template, String target, Map<String, ?> extraSubstitutions) {
         // prefix with runDir if relative target
         String dest = target;
-        if (!new File(target).isAbsolute()) {
+        if (!Os.isAbsolutish(target)) {
             dest = Os.mergePathsUnix(getRunDir(), target);
         }
         
@@ -390,9 +394,7 @@ public abstract class AbstractSoftwareProcessSshDriver extends AbstractSoftwareP
         flags.putAll(sshFlags);
 
         // prefix with runDir if relative target
-        // TODO will this fail if run on Windows?
-        File file = new File(target);
-        String dest = file.isAbsolute() ? target : Os.mergePathsUnix(getRunDir(), target);
+        String dest = Os.isAbsolutish(target) ? target : Os.mergePathsUnix(getRunDir(), target);
         
         if (createParentDir) {
             // don't use File.separator because it's remote machine's format, rather than local machine's
@@ -450,8 +452,7 @@ public abstract class AbstractSoftwareProcessSshDriver extends AbstractSoftwareP
         flags.putAll(sshFlags);
 
         // prefix with runDir if relative target
-        File file = new File(target);
-        String dest = file.isAbsolute() ? target : Urls.mergePaths(getRunDir(), target);
+        String dest = Os.isAbsolutish(target) ? target : Urls.mergePaths(getRunDir(), target);
 
         // TODO SshMachineLocation.copyTo currently doesn't log warn on non-zero or set blocking details
         // (because delegated to by installTo, for multiple calls). So do it here for now.
@@ -601,7 +602,7 @@ public abstract class AbstractSoftwareProcessSshDriver extends AbstractSoftwareP
 
         if (truth(flags.get(USE_PID_FILE))) {
             Object usePidFile = flags.get(USE_PID_FILE);
-            String pidFile = (usePidFile instanceof CharSequence ? usePidFile : Os.mergePaths(getRunDir(), PID_FILENAME)).toString();
+            String pidFile = (usePidFile instanceof CharSequence ? usePidFile : Os.mergePathsUnix(getRunDir(), PID_FILENAME)).toString();
             String processOwner = (String) flags.get(PROCESS_OWNER);
             if (LAUNCHING.equals(phase)) {
                 entity.setAttribute(SoftwareProcess.PID_FILE, pidFile);
