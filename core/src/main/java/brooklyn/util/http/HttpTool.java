@@ -6,8 +6,13 @@ import static com.google.common.base.Preconditions.checkState;
 import java.net.URI;
 import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 
+import brooklyn.config.BrooklynProperties;
+import brooklyn.util.text.Strings;
+import com.google.common.collect.Lists;
 import org.apache.http.*;
 import org.apache.http.auth.AuthScope;
 import org.apache.http.auth.Credentials;
@@ -20,7 +25,6 @@ import org.apache.http.client.methods.HttpPost;
 import org.apache.http.client.methods.HttpPut;
 import org.apache.http.client.methods.HttpUriRequest;
 import org.apache.http.conn.ClientConnectionManager;
-import org.apache.http.conn.params.ConnRoutePNames;
 import org.apache.http.conn.routing.HttpRoute;
 import org.apache.http.conn.routing.HttpRoutePlanner;
 import org.apache.http.conn.scheme.Scheme;
@@ -144,30 +148,45 @@ public class HttpTool {
             this.trustSelfSigned = true;
             return this;
         }
+        public HttpClientBuilder routeIfProxy() {
+            // Checking proxy configuration at properties
+            String host = BrooklynProperties.Factory.newDefault().getFirst("brooklyn.proxy.host");
+            if(Strings.isEmpty(host))
+                return this;
+            int port = Integer.parseInt(BrooklynProperties.Factory.newDefault().getFirst("brooklyn.proxy.port"));
+            if(port < 0)
+                return this;
+            String protocol = BrooklynProperties.Factory.newDefault().getFirst("brooklyn.proxy.protocol");
+            if(Strings.isEmpty(host))
+                protocol = "http";
+            String exclusionString = BrooklynProperties.Factory.newDefault().getFirst("brooklyn.proxy.exclude");
 
-        public HttpClientBuilder proxy(String url, int proxyPort, String protocol) {
-            // TODO: Check sanity of input values
-            //if (millis > Integer.MAX_VALUE) throw new IllegalStateException("HttpClient only accepts upto max-int millis for socketTimeout, but given "+val);
+            final List<String> excludedHosts;
+            if(Strings.isNonEmpty(exclusionString)){
+                excludedHosts = Arrays.asList(exclusionString.split("[\\s,;]+"));
+            }else{
+                excludedHosts = Lists.newArrayList("127.0.0.1");
+            }
 
-            HttpHost proxy = new HttpHost(url, proxyPort, protocol);
+            HttpHost proxy = new HttpHost(host, port, protocol);
             routePlanner = new DefaultProxyRoutePlanner(proxy) {
-
                 @Override
                 public HttpRoute determineRoute(
                         final HttpHost host,
                         final HttpRequest request,
                         final HttpContext context) throws HttpException {
                     String hostname = host.getHostName();
-                    if (hostname.equals("127.0.0.1") || hostname.equalsIgnoreCase("localhost")) {
-                        // Return direct route
-                        return new HttpRoute(host);
-                    }
+                        for (String excludedHost : excludedHosts) {
+                            if (hostname.equalsIgnoreCase(excludedHost)) {
+                                // Return direct route
+                                return new HttpRoute(host);
+                            }
+                        }
                     return super.determineRoute(host, request, context);
                 }
             };
             return this;
         }
-
         public HttpClient build() {
             final DefaultHttpClient httpClient = new DefaultHttpClient(clientConnectionManager, httpParams);
             // support redirects for POST (similar to `curl --post301 -L`)
@@ -216,10 +235,10 @@ public class HttpTool {
                 LOG.warn("credentials have no effect in builder unless URI for host is specified");
             }
 
-            if (routePlanner != null){
+            routeIfProxy();
+            if(routePlanner != null) {
                 httpClient.setRoutePlanner(routePlanner);
             }
-
             return httpClient;
         }
     }
