@@ -10,6 +10,9 @@ import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
 
+import brooklyn.config.BrooklynProperties;
+import brooklyn.location.basic.LocalhostPropertiesFromBrooklynProperties;
+import brooklyn.management.ManagementContext;
 import org.apache.http.auth.Credentials;
 import org.apache.http.auth.UsernamePasswordCredentials;
 import org.apache.http.client.HttpClient;
@@ -177,6 +180,7 @@ public class HttpFeed extends AbstractFeed {
             }
             return this;
         }
+
         public HttpFeed build() {
             built = true;
             HttpFeed result = new HttpFeed(this);
@@ -322,6 +326,7 @@ public class HttpFeed extends AbstractFeed {
     private HttpClient createHttpClient(HttpPollIdentifier pollIdentifier) {
         URI uri = pollIdentifier.uriProvider.get();
         HttpClientBuilder builder = HttpTool.httpClientBuilder()
+                //.proxy("proxy.uma.es", 3128, "http")
                 .trustAll()
                 .laxRedirect(true);
         if (uri != null) builder.uri(uri);

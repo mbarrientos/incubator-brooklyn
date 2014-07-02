@@ -8,10 +8,7 @@ import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
 import java.util.Map;
 
-import org.apache.http.ConnectionReuseStrategy;
-import org.apache.http.HttpEntity;
-import org.apache.http.HttpRequest;
-import org.apache.http.HttpResponse;
+import org.apache.http.*;
 import org.apache.http.auth.AuthScope;
 import org.apache.http.auth.Credentials;
 import org.apache.http.client.HttpClient;
@@ -23,6 +20,9 @@ import org.apache.http.client.methods.HttpPost;
 import org.apache.http.client.methods.HttpPut;
 import org.apache.http.client.methods.HttpUriRequest;
 import org.apache.http.conn.ClientConnectionManager;
+import org.apache.http.conn.params.ConnRoutePNames;
+import org.apache.http.conn.routing.HttpRoute;
+import org.apache.http.conn.routing.HttpRoutePlanner;
 import org.apache.http.conn.scheme.Scheme;
 import org.apache.http.conn.scheme.SchemeSocketFactory;
 import org.apache.http.conn.ssl.SSLSocketFactory;
@@ -32,9 +32,11 @@ import org.apache.http.conn.ssl.X509HostnameVerifier;
 import org.apache.http.entity.ByteArrayEntity;
 import org.apache.http.impl.client.DefaultHttpClient;
 import org.apache.http.impl.client.LaxRedirectStrategy;
+import org.apache.http.impl.conn.DefaultProxyRoutePlanner;
 import org.apache.http.params.BasicHttpParams;
 import org.apache.http.params.HttpConnectionParams;
 import org.apache.http.params.HttpParams;
+import org.apache.http.protocol.HttpContext;
 import org.apache.http.util.EntityUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -44,6 +46,7 @@ import brooklyn.util.time.Duration;
 
 import com.google.common.base.Optional;
 import com.google.common.collect.Multimap;
+
 
 public class HttpTool {
 
@@ -72,6 +75,7 @@ public class HttpTool {
         private ConnectionReuseStrategy reuseStrategy;
         private boolean trustAll;
         private boolean trustSelfSigned;
+        private HttpRoutePlanner routePlanner;
 
         public HttpClientBuilder clientConnectionManager(ClientConnectionManager val) {
             this.clientConnectionManager = checkNotNull(val, "clientConnectionManager");
@@ -140,9 +144,32 @@ public class HttpTool {
             this.trustSelfSigned = true;
             return this;
         }
+
+        public HttpClientBuilder proxy(String url, int proxyPort, String protocol) {
+            // TODO: Check sanity of input values
+            //if (millis > Integer.MAX_VALUE) throw new IllegalStateException("HttpClient only accepts upto max-int millis for socketTimeout, but given "+val);
+
+            HttpHost proxy = new HttpHost(url, proxyPort, protocol);
+            routePlanner = new DefaultProxyRoutePlanner(proxy) {
+
+                @Override
+                public HttpRoute determineRoute(
+                        final HttpHost host,
+                        final HttpRequest request,
+                        final HttpContext context) throws HttpException {
+                    String hostname = host.getHostName();
+                    if (hostname.equals("127.0.0.1") || hostname.equalsIgnoreCase("localhost")) {
+                        // Return direct route
+                        return new HttpRoute(host);
+                    }
+                    return super.determineRoute(host, request, context);
+                }
+            };
+            return this;
+        }
+
         public HttpClient build() {
             final DefaultHttpClient httpClient = new DefaultHttpClient(clientConnectionManager, httpParams);
-    
             // support redirects for POST (similar to `curl --post301 -L`)
             // http://stackoverflow.com/questions/3658721/httpclient-4-error-302-how-to-redirect
             if (laxRedirect) {
@@ -188,7 +215,11 @@ public class HttpTool {
             if (uri==null && credentials!=null) {
                 LOG.warn("credentials have no effect in builder unless URI for host is specified");
             }
-    
+
+            if (routePlanner != null){
+                httpClient.setRoutePlanner(routePlanner);
+            }
+
             return httpClient;
         }
     }
