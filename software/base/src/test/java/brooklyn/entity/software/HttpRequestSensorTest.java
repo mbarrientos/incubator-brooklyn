@@ -9,17 +9,17 @@ import brooklyn.entity.software.http.HttpRequestSensor;
 import brooklyn.event.AttributeSensor;
 import brooklyn.event.basic.Sensors;
 import brooklyn.location.Location;
-import brooklyn.test.Asserts;
 import brooklyn.test.entity.TestApplication;
 import brooklyn.test.entity.TestEntity;
 import brooklyn.util.config.ConfigBag;
 import com.google.common.collect.ImmutableList;
-import org.testng.Assert;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
 
 import static org.testng.Assert.assertTrue;
+import static org.testng.Assert.assertEquals;
+import static brooklyn.test.Asserts.succeedsEventually;
 
 public class HttpRequestSensorTest {
     final static AttributeSensor<String> SENSOR_STRING = Sensors.newStringSensor("aString", "");
@@ -50,8 +50,7 @@ public class HttpRequestSensorTest {
             .apply(entity);
         entity.setAttribute(Attributes.SERVICE_UP, true);
 
-
-        Asserts.succeedsEventually(new Runnable() {
+        succeedsEventually(new Runnable() {
             public void run() {
                 String val = entity.getAttribute(SENSOR_STRING);
                 assertTrue(val != null);
@@ -59,6 +58,6 @@ public class HttpRequestSensorTest {
         });
 
         String val = entity.getAttribute(SENSOR_STRING);
-        Assert.assertEquals(val, "myValue", "val=" + val);
+        assertEquals(val, "myValue", "val=" + val);
     }
 }
