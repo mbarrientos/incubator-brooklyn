@@ -3,6 +3,7 @@ package brooklyn.util.http;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 
+import java.net.InetAddress;
 import java.net.URI;
 import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
@@ -81,6 +82,7 @@ public class HttpTool {
         private boolean trustSelfSigned;
         private HttpRoutePlanner routePlanner;
 
+
         public HttpClientBuilder clientConnectionManager(ClientConnectionManager val) {
             this.clientConnectionManager = checkNotNull(val, "clientConnectionManager");
             return this;
@@ -150,22 +152,21 @@ public class HttpTool {
         }
         public HttpClientBuilder routeIfProxy() {
             // Checking proxy configuration at properties
-            String host = BrooklynProperties.Factory.newDefault().getFirst("brooklyn.proxy.host");
+            BrooklynProperties brooklynProperties = BrooklynProperties.Factory.newDefault();
+            String host = brooklynProperties.getFirst("brooklyn.proxy.host");
             if(Strings.isEmpty(host))
                 return this;
-            int port = Integer.parseInt(BrooklynProperties.Factory.newDefault().getFirst("brooklyn.proxy.port"));
+            int port = Integer.parseInt(brooklynProperties.getFirst("brooklyn.proxy.port"));
             if(port < 0)
                 return this;
-            String protocol = BrooklynProperties.Factory.newDefault().getFirst("brooklyn.proxy.protocol");
+            String protocol = brooklynProperties.getFirst("brooklyn.proxy.protocol");
             if(Strings.isEmpty(host))
                 protocol = "http";
-            String exclusionString = BrooklynProperties.Factory.newDefault().getFirst("brooklyn.proxy.exclude");
+            String exclusionString = brooklynProperties.getFirst("brooklyn.proxy.exclude");
 
-            final List<String> excludedHosts;
+            final List<String> excludedHosts = Lists.newArrayList("127.0.0.1");
             if(Strings.isNonEmpty(exclusionString)){
-                excludedHosts = Arrays.asList(exclusionString.split("[\\s,;]+"));
-            }else{
-                excludedHosts = Lists.newArrayList("127.0.0.1");
+                excludedHosts.addAll(Arrays.asList(exclusionString.split("[\\s,;]+")));
             }
 
             HttpHost proxy = new HttpHost(host, port, protocol);
@@ -176,8 +177,11 @@ public class HttpTool {
                         final HttpRequest request,
                         final HttpContext context) throws HttpException {
                     String hostname = host.getHostName();
+                    String address = host.getAddress().getHostAddress();
+                        // TODO: accept wildcards in excluded hosts.
                         for (String excludedHost : excludedHosts) {
-                            if (hostname.equalsIgnoreCase(excludedHost)) {
+                            if (hostname.equalsIgnoreCase(excludedHost)
+                                    || address.equals(excludedHost)) {
                                 // Return direct route
                                 return new HttpRoute(host);
                             }
