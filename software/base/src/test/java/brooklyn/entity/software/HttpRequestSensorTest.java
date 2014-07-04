@@ -1,11 +1,9 @@
 package brooklyn.entity.software;
 
-import brooklyn.entity.Effector;
 import brooklyn.entity.basic.ApplicationBuilder;
 import brooklyn.entity.basic.Attributes;
 import brooklyn.entity.basic.Entities;
 import brooklyn.entity.basic.EntityLocal;
-import brooklyn.entity.effector.Effectors;
 import brooklyn.entity.proxying.EntitySpec;
 import brooklyn.entity.software.http.HttpRequestSensor;
 import brooklyn.event.AttributeSensor;
@@ -14,23 +12,15 @@ import brooklyn.location.Location;
 import brooklyn.test.Asserts;
 import brooklyn.test.entity.TestApplication;
 import brooklyn.test.entity.TestEntity;
-import brooklyn.util.collections.MutableMap;
 import brooklyn.util.config.ConfigBag;
 import com.google.common.collect.ImmutableList;
-import org.apache.http.HttpRequest;
 import org.testng.Assert;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
-import sun.rmi.runtime.Log;
-
-import java.io.File;
 
 import static org.testng.Assert.assertTrue;
 
-/**
- * Created by MBarrientos on 01/07/2014.
- */
 public class HttpRequestSensorTest {
     final static AttributeSensor<String> SENSOR_STRING = Sensors.newStringSensor("aString", "");
     final static AttributeSensor<String> SENSOR_JSON_OBJECT = Sensors.newStringSensor("aJSONObject","");

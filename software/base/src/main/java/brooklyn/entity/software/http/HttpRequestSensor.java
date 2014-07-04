@@ -10,12 +10,10 @@ import brooklyn.event.feed.http.HttpPollConfig;
 import brooklyn.event.feed.http.HttpValueFunctions;
 import brooklyn.util.config.ConfigBag;
 import brooklyn.util.time.Duration;
-import com.google.common.base.Functions;
 import com.google.common.base.Preconditions;
 import org.slf4j.LoggerFactory;
 
 import java.util.Map;
-import java.util.logging.Logger;
 
 /**
  * Configurable {@link brooklyn.entity.proxying.EntityInitializer} which adds an HTTP sensor feed to retrieve the
@@ -43,12 +41,9 @@ public final class HttpRequestSensor<T extends String> extends AddSensor<String,
     public void apply(final EntityLocal entity) {
         super.apply(entity);
 
-        //Duration period = entity.getConfig(SENSOR_PERIOD);
         Duration period = Duration.ONE_SECOND;
 
         HttpPollConfig<String> pollConfig = new HttpPollConfig<String>(sensor)
-                //.checkSuccess(HttpValueFunctions.responseCodeEquals(200))
-                //.onFailureOrException(Functions.constant((String)null))
                 .onSuccess(HttpValueFunctions.jsonContents(jsonObject, String.class));
 
         if (period != null) pollConfig.period(period);
