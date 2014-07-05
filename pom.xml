@@ -108,6 +108,7 @@
         <osgi-core.version>4.3.0</osgi-core.version>
         <commons-io.version>2.4</commons-io.version>
         <hazelcast.version>3.0</hazelcast.version>
+        <jsonPath.version>0.9.1</jsonPath.version>
      
         <includedTestGroups />
         <excludedTestGroups>Integration,Acceptance,Live,WIP</excludedTestGroups>

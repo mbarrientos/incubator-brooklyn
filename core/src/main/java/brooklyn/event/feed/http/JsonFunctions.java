@@ -20,6 +20,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.jayway.jsonpath.JsonPath;
 
 public class JsonFunctions {
 
@@ -66,9 +67,10 @@ public class JsonFunctions {
         return new Function<JsonElement, JsonElement>() {
             @Override public JsonElement apply(JsonElement input) {
                 JsonElement curr = input;
+                String jsonString = input.toString();
+                JsonParser jsonParser = new JsonParser();
                 for (String element : elements) {
-                    JsonObject jo = curr.getAsJsonObject();
-                    curr = jo.get(element);
+                    curr = jsonParser.parse(JsonPath.<String>read(jsonString, element));
                     if (curr==null) 
                         throw new NoSuchElementException("No element '"+element+" in JSON, when walking "+elements);
                 }
