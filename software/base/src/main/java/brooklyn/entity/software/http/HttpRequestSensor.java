@@ -11,6 +11,7 @@ import brooklyn.event.feed.http.HttpValueFunctions;
 import brooklyn.util.config.ConfigBag;
 import brooklyn.util.time.Duration;
 import com.google.common.base.Preconditions;
+import com.jayway.jsonpath.JsonPath;
 import org.slf4j.LoggerFactory;
 
 import java.util.Map;
@@ -25,15 +26,15 @@ public final class HttpRequestSensor<T extends String> extends AddSensor<String,
 
     private static final org.slf4j.Logger log = LoggerFactory.getLogger(HttpRequestSensor.class);
 
-    public static final ConfigKey<String> SENSOR_JSON_OBJECT = ConfigKeys.newStringConfigKey("JSONObject");
+    public static final ConfigKey<String> JSON_PATH = ConfigKeys.newStringConfigKey("jsonPath");
     public static final ConfigKey<String> SENSOR_URI = ConfigKeys.newStringConfigKey("uri");
 
-    String jsonObject;
+    String jsonPath;
     String uri;
 
     public HttpRequestSensor(ConfigBag params) {
         super(newSensor(String.class, params));
-        jsonObject = Preconditions.checkNotNull(params.get(SENSOR_JSON_OBJECT), SENSOR_JSON_OBJECT);
+        jsonPath = Preconditions.checkNotNull(params.get(JSON_PATH), JSON_PATH);
         uri = Preconditions.checkNotNull(params.get(SENSOR_URI), SENSOR_URI);
     }
 
@@ -44,7 +45,7 @@ public final class HttpRequestSensor<T extends String> extends AddSensor<String,
         Duration period = Duration.ONE_SECOND;
 
         HttpPollConfig<String> pollConfig = new HttpPollConfig<String>(sensor)
-                .onSuccess(HttpValueFunctions.jsonContents(jsonObject, String.class));
+                .onSuccess(HttpValueFunctions.jsonContents(jsonPath, String.class));
 
         if (period != null) pollConfig.period(period);
 
@@ -53,7 +54,7 @@ public final class HttpRequestSensor<T extends String> extends AddSensor<String,
                 .poll(pollConfig)
                 .build();
 
-        log.info("HTTPRequestSensor: " + uri + " -> " + jsonObject);
+        log.info("HTTPRequestSensor: " + uri + " -> " + jsonPath);
     }
 
     public HttpRequestSensor(Map<String, String> params) {

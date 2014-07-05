@@ -45,7 +45,7 @@ public class HttpRequestSensorTest {
     public void testHttpSensor() throws Exception {
         new HttpRequestSensor<String>(ConfigBag.newInstance()
                 .configure(HttpRequestSensor.SENSOR_NAME, SENSOR_STRING.getName())
-                .configure(HttpRequestSensor.SENSOR_JSON_OBJECT, "myKey")
+                .configure(HttpRequestSensor.JSON_PATH, "myKey")
                 .configure(HttpRequestSensor.SENSOR_URI, "http://echo.jsontest.com/myKey/myValue"))
             .apply(entity);
         entity.setAttribute(Attributes.SERVICE_UP, true);
