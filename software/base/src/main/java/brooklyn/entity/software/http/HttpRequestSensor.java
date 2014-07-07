@@ -47,7 +47,7 @@ public final class HttpRequestSensor<T extends String> extends AddSensor<String,
         HttpPollConfig<String> pollConfig = new HttpPollConfig<String>(sensor)
                 .checkSuccess(HttpValueFunctions.responseCodeEquals(200))
                 .onFailureOrException(Functions.constant((String) null))
-                .onSuccess(HttpValueFunctions.jsonContents(jsonPath, String.class));
+                .onSuccess(HttpValueFunctions.jsonContentsFromPath(jsonPath, String.class));
 
         if (period != null) pollConfig.period(period);
 

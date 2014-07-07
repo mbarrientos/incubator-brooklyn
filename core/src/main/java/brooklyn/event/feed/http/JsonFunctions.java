@@ -63,15 +63,14 @@ public class JsonFunctions {
     public static Function<JsonElement, JsonElement> walk(final Iterable<String> elements) {
         // could do this instead, pointing at Maybe for this, and for walkN, but it's slightly less efficient
 //      return Functionals.chain(MaybeFunctions.<JsonElement>wrap(), walkM(elements), MaybeFunctions.<JsonElement>get());
-        
+
         return new Function<JsonElement, JsonElement>() {
             @Override public JsonElement apply(JsonElement input) {
                 JsonElement curr = input;
-                String jsonString = input.toString();
-                JsonParser jsonParser = new JsonParser();
                 for (String element : elements) {
-                    curr = jsonParser.parse(JsonPath.<String>read(jsonString, element));
-                    if (curr==null) 
+                    JsonObject jo = curr.getAsJsonObject();
+                    curr = jo.get(element);
+                    if (curr==null)
                         throw new NoSuchElementException("No element '"+element+" in JSON, when walking "+elements);
                 }
                 return curr;
@@ -129,6 +128,22 @@ public class JsonFunctions {
                     if (currO==null) return Maybe.absent("No element '"+element+" in JSON, when walking "+elements);
                     curr = Maybe.of(currO);
                 }
+                return curr;
+            }
+        };
+    }
+
+    /**
+     * returns an element from a json object given a full path {@link com.jayway.jsonpath.JsonPath}
+     */
+    public static Function<JsonElement,? extends JsonElement> getPath(final String element) {
+        return new Function<JsonElement, JsonElement>() {
+            @Override public JsonElement apply(JsonElement input) {
+                String jsonString = input.toString();
+                JsonParser jsonParser = new JsonParser();
+                JsonElement curr = jsonParser.parse(JsonPath.<String>read(jsonString, element));
+                if (curr==null)
+                    throw new NoSuchElementException("No element '"+element+" in JSON);");
                 return curr;
             }
         };
