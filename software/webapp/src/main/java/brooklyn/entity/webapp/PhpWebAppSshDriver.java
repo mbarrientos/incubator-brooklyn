@@ -22,19 +22,14 @@ import static com.google.common.base.Preconditions.checkNotNull;
  */
 public abstract class PhpWebAppSshDriver extends AbstractSoftwareProcessSshDriver implements PhpWebAppDriver{
 
+
     public PhpWebAppSshDriver(PhpWebAppSoftwareProcessImpl entity, SshMachineLocation machine){
         super(entity, machine);
-
     }
 
     @Override
     public PhpWebAppSoftwareProcessImpl getEntity() {
         return (PhpWebAppSoftwareProcessImpl) super.getEntity();
-    }
-
-    @Override
-    public Set<String> getEnabledProtocols() {
-        return entity.getAttribute(PhpWebAppSoftwareProcess.ENABLED_PROTOCOLS);
     }
 
     protected boolean isProtocolEnabled(String protocol) {
@@ -47,7 +42,10 @@ public abstract class PhpWebAppSshDriver extends AbstractSoftwareProcessSshDrive
         return false;
     }
 
-    //TODO refactor. Duplicate code
+    @Override
+    public Set<String> getEnabledProtocols() {
+        return entity.getAttribute(PhpWebAppSoftwareProcess.ENABLED_PROTOCOLS);
+    }
 
     @Override
     public Integer getHttpPort() {
@@ -79,7 +77,7 @@ public abstract class PhpWebAppSshDriver extends AbstractSoftwareProcessSshDrive
         return (ssl == null) ? null : ssl.getKeyAlias();
     }
 
-
+    //TODO refactor this method (abstract super class)
     protected String inferRootUrl() {
         if (isProtocolEnabled("https")) {
             Integer port = getHttpsPort();
@@ -100,8 +98,6 @@ public abstract class PhpWebAppSshDriver extends AbstractSoftwareProcessSshDrive
         entity.setAttribute(WebAppService.ROOT_URL, rootUrl);
     }
 
-
-
     protected abstract String getDeploySubdir();
 
     protected String getDeployDir() {
@@ -112,41 +108,18 @@ public abstract class PhpWebAppSshDriver extends AbstractSoftwareProcessSshDrive
     }
 
     @Override
-    public void deploy(File file) {
-        deploy(file, null);
+    public String deploy(String url){
+
+        log.info("{} deploying {} to {}:{}", new Object[]{entity, url, getHostname()});
+        // create a backup
+        //getMachine().execCommands("backing up old war", ImmutableList.of(String.format("mv -f %s %s.bak > /dev/null 2>&1", dest, dest))); //back up old file/directory
+        String appName=getNameOfRepositoryGitFromHttpsUrl(url);
+        String deployTargetDir=getDeployDir()+"/"+appName;
+        int copyResult = copyUsingProtocol(url, deployTargetDir);
+        log.debug("{} deployed {} to {}:{}: result {}", new Object[]{entity, url, getHostname(), deployTargetDir, copyResult});
+        if (copyResult!=0) log.warn("Problem deploying {} to {}:{} for {}: result {}", new Object[]{url, getHostname(), deployTargetDir, entity, copyResult});
+        return appName;
     }
-
-    @Override
-    public void deploy(File f, String targetName) {
-        if (targetName == null) {
-            targetName = f.getName();
-        }
-        deploy(f.toURI().toASCIIString(), targetName);
-    }
-
-
-    /**
-     * Deploys a URL as a webapp at the appserver.
-     *
-     * Returns a token which can be used as an argument to undeploy,
-     * typically the web context with leading slash where the app can be reached (just "/" for ROOT)
-     *
-     */
-//    @Override
-//    we need modified the methods to generate the canonicalTargetName, because by default they are defined to
-//    work with Java applications (war, ear and so on)
-//    public String deploy(String url, String targetName) {
-//        String canonicalTargetName = getFilenameContextMapper().convertDeploymentTargetNameToFilename(targetName);
-//        String dest = getDeployDir() + "/" + canonicalTargetName;
-//        log.info("{} deploying {} to {}:{}", new Object[]{entity, url, getHostname(), dest});
-//        // create a backup
-//        getMachine().execCommands("backing up old war", ImmutableList.of(String.format("mv -f %s %s.bak > /dev/null 2>&1", dest, dest))); //back up old file/directory
-//        int result = copyResource(url, dest);
-//        log.debug("{} deployed {} to {}:{}: result {}", new Object[]{entity, url, getHostname(), dest, result});
-//        if (result!=0) log.warn("Problem deploying {} to {}:{} for {}: result {}", new Object[]{url, getHostname(), dest, entity, result});
-//        return getFilenameContextMapper().convertDeploymentTargetNameToContext(canonicalTargetName);
-//    }
-
 
     protected Map<String, Integer> getPortMap() {
         return ImmutableMap.of("httpPort", entity.getAttribute(WebAppService.HTTP_PORT));
@@ -160,13 +133,12 @@ public abstract class PhpWebAppSshDriver extends AbstractSoftwareProcessSshDrive
                 .build();
     }
 
-
     @Override
     public void install() {
         log.debug("Installing {}", getEntity());
 
         List<String> commands = ImmutableList.<String>builder()
-                .add(BashCommands.installPackage(MutableMap.of("yum", "git php"), null))
+                .add(BashCommands.installPackage(MutableMap.of("apt", "php"), null))
                 .build();
 
         newScript(INSTALLING)
@@ -175,56 +147,20 @@ public abstract class PhpWebAppSshDriver extends AbstractSoftwareProcessSshDrive
     }
 
     @Override
-    public void customize() {
-        log.debug("Customising {}", getEntity());
-
-//        String appUser = getEntity().getConfig(PhpWebAppSoftwareProcess.APP_USER);
-//        String appName = getEntity().getConfig(PhpWebAppService.APP_NAME);
-//
-//        //The application could be stored in any place.
-//        List<String> commands = ImmutableList.<String>builder()
-//                .add(String.format("git clone %s %s", getEntity().getConfig(PhpWebAppService.APP_GIT_REPOSITORY_URL), appName))
-//                .add(BashCommands.sudo(String.format("chown -R %1$s:%1$s %2$s", appUser, appName)))
-//                .build();
-//
-//        newScript(CUSTOMIZING)
-//                .body.append(commands)
-//                .execute();
-    }
-
-    @Override
-    public void launch() {
-        log.debug("Launching {}", getEntity());
-
-        String appUser = getEntity().getConfig(PhpWebAppSoftwareProcess.APP_USER);
-        String appName = getEntity().getConfig(PhpWebAppService.APP_NAME);
-
-        List<String> commands = ImmutableList.<String>builder()
-                .add(String.format("cd %s", Os.mergePathsUnix(getRunDir(), appName)))
-                .add(BashCommands.sudoAsUser(appUser, "nohup node " + getEntity().getConfig(PhpWebAppService.APP_START_FILE) + " &"))
-                .build();
-
-        newScript(LAUNCHING)
-                .body.append(commands)
-                .execute();
-    }
-
-    @Override
-    public boolean isRunning() {
-        return newScript(CHECK_RUNNING).execute() == 0;
-    }
-
-    @Override
     public void stop() {
+
         newScript(STOPPING).execute();
     }
 
     @Override
-    public Map<String, String> getShellEnvironment() {
-        return MutableMap.<String, String>builder().putAll(super.getShellEnvironment())
-                .put("PORT", Integer.toString(getHttpPort()))
-                .build();
+    public void undeploy(String targetName) {
+        String dest = getDeployDir() + "/" + targetName;
+        log.info("{} undeploying {}:{}", new Object[]{entity, getHostname(), dest});
+        int result = getMachine().execCommands("removing war on undeploy", ImmutableList.of(String.format("rm -f %s", dest)));
+        log.debug("{} undeployed {}:{}: result {}", new Object[]{entity, getHostname(), dest, result});
     }
+
+
 
 }
 

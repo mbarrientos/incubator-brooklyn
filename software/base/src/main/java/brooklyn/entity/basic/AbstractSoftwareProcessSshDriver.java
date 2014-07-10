@@ -77,7 +77,7 @@ public abstract class AbstractSoftwareProcessSshDriver extends AbstractSoftwareP
         if (getSshFlags()!=null && !getSshFlags().isEmpty())
             machine.configure(getSshFlags());
         
-        // ensure these are set using the routines below, not a global ConfigToAttributes.apply() 
+        // ensure these are set using the routines below, not a global ConfigToAttributes.apply()
         getInstallDir();
         getRunDir();
     }
@@ -684,5 +684,76 @@ public abstract class AbstractSoftwareProcessSshDriver extends AbstractSoftwareP
         result.add(22);
         return result;
     }
+
+
+    public static final String  GIT_EXTENSION = ".git";
+    public final static String HTTPS_PREFIX="https://";
+
+    //TODO Refactor using a Factory
+    public String getNameOfRepositoryGitFromHttpsUrl(String url){
+        String nameOfRepository="";
+        nameOfRepository=url.substring(url.lastIndexOf("/")+1, url.lastIndexOf("."));
+        return nameOfRepository;
+    }
+
+    //TODO Refactor using a Fabric to provide a polymorphic object to copy and APP from https:git, ssh:git, svn and so on
+    public int copyUsingProtocol(String url, String deployTargetDir){
+        int result =0;
+        if(isHttpsGitURL(url)){
+            result = copyUsingProtocolGitHttps(url, deployTargetDir);
+        }
+        return result;
+    }
+
+    //TODO refactor (superClass)
+    private  boolean isHttpsGitURL(String url){
+        boolean isHttpsGitURL= false;
+        checkNotNull(url, "git URL is NULL.");
+        isHttpsGitURL=checkGitExtension(url)&&checkHttpsPrefix(url);
+        return isHttpsGitURL;
+    }
+
+    private  boolean checkGitExtension(String url){
+        boolean hasGitExtension=false;
+        int lastPoint =url.lastIndexOf(".");
+        if(lastPoint!=-1)
+            hasGitExtension=url.substring(lastPoint).toLowerCase().equals(GIT_EXTENSION);
+        return hasGitExtension;
+    }
+
+    private  boolean checkHttpsPrefix(String url){
+        return url.toLowerCase().startsWith(HTTPS_PREFIX);
+    }
+
+    private int copyUsingProtocolGitHttps(String url, String targetDir){
+        checkAndInstallGit();
+        List<String> commands = ImmutableList.<String>builder()
+                .add(String.format("git clone %s %s", url, targetDir))
+                        //.add(BashCommands.sudo(String.format("chown -R %1$s:%1$s %2$s", APP_USER, targetDir)))
+                .build();
+        //The user will be need some permissions to the targetDir, e.g. www-data:www-data in apache
+        //And add the folder to the enable service
+        int result= newScript(CUSTOMIZING)
+                .body.append(commands)
+                .execute();
+
+        return result;
+    }
+
+    private void checkAndInstallGit(){
+        int gitInstalled= getMachine().execCommands("checkGitVersion", ImmutableList.of("git --version"));
+        if (gitInstalled!=0)
+            installGit();
+    }
+
+    private int installGit(){
+        int result;
+        log.debug("Installing{}", getEntity());
+        List<String> commands= ImmutableList.<String>builder().add(BashCommands.
+                installPackage(MutableMap.of("apt", "git"), null)).build();
+        result=newScript(INSTALLING).body.append(commands).execute();
+        return result;
+    }
+
 
 }

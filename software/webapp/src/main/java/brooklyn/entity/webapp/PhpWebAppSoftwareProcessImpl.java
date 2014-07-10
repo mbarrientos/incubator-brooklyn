@@ -4,16 +4,16 @@ import brooklyn.entity.Entity;
 import brooklyn.entity.annotation.Effector;
 import brooklyn.entity.annotation.EffectorParam;
 import brooklyn.entity.basic.SoftwareProcessImpl;
+import brooklyn.location.access.BrooklynAccessUtils;
 import com.google.common.base.Throwables;
 import com.google.common.collect.Sets;
+import com.google.common.net.HostAndPort;
 import org.slf4j.LoggerFactory;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.LinkedHashMap;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 
@@ -41,19 +41,16 @@ public abstract class PhpWebAppSoftwareProcessImpl extends SoftwareProcessImpl i
         return (PhpWebAppDriver) super.getDriver();
     }
 
-    //TODO May Move this method to superclass
     protected Set<String> getEnabledProtocols() {
         return getAttribute(PhpWebAppSoftwareProcess.ENABLED_PROTOCOLS);
     }
 
-    //TODO May Move this method to superclass
     protected Set<String> getDeployedPhpAppsAttribute() {
-        return getAttribute(DEPLOYED_PHP_APP);
+        return getAttribute(DEPLOYED_PHP_APPS);
     }
 
-    //TODO May Move this method to superclass
     protected void setDeployedPhpAppsAttribute(Set<String> deployedPhpApps){
-        setAttribute(DEPLOYED_PHP_APP, deployedPhpApps);
+        setAttribute(DEPLOYED_PHP_APPS, deployedPhpApps);
     }
 
     @Override
@@ -62,46 +59,72 @@ public abstract class PhpWebAppSoftwareProcessImpl extends SoftwareProcessImpl i
         WebAppServiceMethods.connectWebAppServerPolicies(this);
     }
 
-    @Effector(description="Deploys the given artifact, from a source URL, to a given deployment filename/context")
+    @Override
+    protected void doStop(){
+        super.doStop();
+        //zero our workrate derived workrates.
+        //TODO might not be enough, as a policy may still be executing and have a record of historic vals;
+        // should remove policies
+        //also nor sure we want this; implies more generally a resposibility for sensor to announce things
+        //disconnected
+        putEnricherValuesToNullValue();
+    }
+
+    private void putEnricherValuesToNullValue(){
+        setAttribute(REQUESTS_PER_SECOND_LAST, 0D);
+        setAttribute(REQUESTS_PER_SECOND_IN_WINDOW, 0D);
+    }
+
+    // TODO thread-safety issues: if multiple concurrent calls, may break (e.g. deployment_wars being reset)
+    public void deployInitialWars() {
+        initDeployAppAttribteIfIsNull();
+        deployInitialAppGitSource();
+    }
+
+    private void initDeployAppAttribteIfIsNull(){
+        if (getDeployedPhpAppsAttribute() == null)
+            setDeployedPhpAppsAttribute(Sets.<String>newLinkedHashSet());
+    }
+
+    private void deployInitialAppGitSource() {
+        String gitRepoUrl = getConfig(APP_GIT_REPO_URL);
+        if (gitRepoUrl!=null)
+            deploy(gitRepoUrl);
+    }
+
+    @Effector(description="Deploys the given artifact, from a source URL, using the ")
     public void deploy(
-            @EffectorParam(name="url", description="URL of WAR file") String url,
-            @EffectorParam(name="targetName", description="context path where PHP_APP should be deployed (/ for ROOT)") String targetName) {
+            @EffectorParam(name="url", description="URL of WAR file") String url) {
         try {
-            deployPhpApp(url, targetName);
+            deployPhpApp(url);
         } catch (RuntimeException e) {
             // Log and propagate, so that log says which entity had problems...
-            LOG.warn("Error deploying '"+url+"' to "+targetName+" on "+toString()+"; rethrowing...", e);
+            LOG.warn("Error deploying '"+url+"' on "+toString()+"; rethrowing...", e);
             throw Throwables.propagate(e);
         }
     }
 
-    private void deployPhpApp(String url, String targetName){
-
+    private void deployPhpApp(String url){
         checkNotNull(url, "url");
-        checkNotNull(targetName, "targetName");
         PhpWebAppDriver driver =   getDriver();
-        String deployedAppName = driver.deploy(url, targetName);
+        String deployedAppName = driver.deploy(url);
         updateDeploymentSensorToDeployAnApp(deployedAppName);
-
-
     }
 
     private void updateDeploymentSensorToDeployAnApp(String deployedAppName){
-
         Set<String> deployedPhpApps = getDeployedPhpAppsAttribute();
         if (deployedPhpApps == null) {
             deployedPhpApps = Sets.newLinkedHashSet();
         }
         deployedPhpApps.add(deployedAppName);
         setDeployedPhpAppsAttribute(deployedPhpApps);
-
     }
 
     /** For the DEPLOYED_PHP_APP to be updated, the input must match the result of the call to deploy */
     @Override
     @Effector(description="Undeploys the given context/artifact")
     public void undeploy(
-            @EffectorParam(name="targetName") String targetName) {
+            @EffectorParam(name="deployedAppName") String targetName) {
         try {
 
             undeployPhpApp(targetName);
@@ -116,35 +139,14 @@ public abstract class PhpWebAppSoftwareProcessImpl extends SoftwareProcessImpl i
         PhpWebAppDriver driver = getDriver();
         driver.undeploy(targetName);
         updateDeploymentSensorToUndeployAnApp(targetName);
-
     }
-
 
     private void updateDeploymentSensorToUndeployAnApp(String targetName){
-
-        Set<String> deployedPhpApps = getDeployedPhpAppsAttribute();
+        initDeployAppAttribteIfIsNull();
+        Set<String> deployedPhpApps=getDeployedPhpAppsAttribute();
         PhpWebAppDriver driver = getDriver();
-        if (deployedPhpApps == null)
-            deployedPhpApps = Sets.newLinkedHashSet();
-
         deployedPhpApps.remove( driver.getFilenameContextMapper().convertDeploymentTargetNameToContext(targetName) );
         setDeployedPhpAppsAttribute(deployedPhpApps);
-    }
-
-    @Override
-    protected void doStop(){
-        super.doStop();
-        //zero our workrate derived workrates.
-        //TODO might not be enough, as a ploicy may still be executing and have a record of historic vals;
-        // should remove policies
-        //also nor sure we want this; implies more generally a resposibility for sensor to announce things
-        //disconnected
-        putEnricherValuesToNullValue();
-    }
-
-    private void putEnricherValuesToNullValue(){
-        setAttribute(REQUESTS_PER_SECOND_LAST, 0D);
-        setAttribute(REQUESTS_PER_SECOND_IN_WINDOW, 0D);
     }
 
 }

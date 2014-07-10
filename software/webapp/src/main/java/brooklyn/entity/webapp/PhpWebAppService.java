@@ -17,9 +17,9 @@ public interface PhpWebAppService extends WebAppService {
     public static final ConfigKey<String> APP_URL = new BasicConfigKey<String>(
             String.class, "php.app.url ", "The path where the deploment artifact is stored (supporting file: and classpath: prefixes)");
 
-//    @SetFromFlag("app_name")
-//    public static final ConfigKey<List<String>> APP_NAME = new BasicConfigKey(
-//            List.class, "php.app.name", "The name of the PHP application");
+    @SetFromFlag("app_git_repo_url")
+    public static final ConfigKey<String> APP_GIT_REPO_URL = new BasicConfigKey<String>(
+            String.class, "php.app.git.repo.url ", "The Git repository where the application source code is stored (gitRepo)");
 
     @SetFromFlag("app_name")
     public static final ConfigKey<String> APP_NAME = new BasicConfigKey(
