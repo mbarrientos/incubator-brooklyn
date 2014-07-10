@@ -138,7 +138,7 @@ public abstract class PhpWebAppSshDriver extends AbstractSoftwareProcessSshDrive
         log.debug("Installing {}", getEntity());
 
         List<String> commands = ImmutableList.<String>builder()
-                .add(BashCommands.installPackage(MutableMap.of("apt", "php"), null))
+                .add(BashCommands.installPackage(MutableMap.of("apt", "php5"), null))
                 .build();
 
         newScript(INSTALLING)
