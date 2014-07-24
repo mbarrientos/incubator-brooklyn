@@ -10,7 +10,11 @@ import brooklyn.entity.basic.SoftwareProcessDriver;
 import brooklyn.entity.proxying.ImplementedBy;
 import brooklyn.event.AttributeSensor;
 import brooklyn.event.basic.BasicAttributeSensor;
+import brooklyn.event.basic.BasicAttributeSensorAndConfigKey;
+import brooklyn.event.basic.PortAttributeSensorAndConfigKey;
 import brooklyn.util.flags.SetFromFlag;
+import brooklyn.event.basic.BasicAttributeSensorAndConfigKey.StringAttributeSensorAndConfigKey;
+
 
 import java.util.Set;
 
@@ -25,8 +29,7 @@ public interface PhpWebAppSoftwareProcess extends SoftwareProcess, PhpWebAppServ
     public static final MethodEffector<Void> DEPLOY = new MethodEffector<Void>(PhpWebAppSoftwareProcess.class, "deploy");
     public static final MethodEffector<Void> UNDEPLOY = new MethodEffector<Void>(PhpWebAppSoftwareProcess.class, "undeploy");
 
-    ConfigKey<String> SUGGESTED_VERSION= ConfigKeys.newConfigKeyWithDefault(SoftwareProcess.SUGGESTED_VERSION, "stable");
-
+    ConfigKey<String> SUGGESTED_VERSION= ConfigKeys.newConfigKeyWithDefault(SoftwareProcess.SUGGESTED_VERSION, "5");
 
     /**
      * This method does not need a target name because the URL. So, the download method have to define the path.

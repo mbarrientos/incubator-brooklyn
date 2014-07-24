@@ -15,15 +15,14 @@ import java.util.Set;
 
 public interface PhpWebAppDriver extends SoftwareProcessDriver {
 
-    @SetFromFlag("app_user")
-    ConfigKey<String> APP_USER = ConfigKeys.newStringConfigKey("php.app.user", "The user to run the PHP application as",
-            "www-data");
+
 
     Set<String> getEnabledProtocols();
 
     Integer getHttpPort();
 
     Integer getHttpsPort();
+
 
     HttpsSslConfig getHttpsSslConfig();
 
@@ -32,7 +31,7 @@ public interface PhpWebAppDriver extends SoftwareProcessDriver {
 
     void undeploy(String targetName);
 
-    FilenameToWebContextMapper getFilenameContextMapper();
+   //FilenameToWebContextMapper getFilenameContextMapper();
 
 
 

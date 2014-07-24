@@ -29,9 +29,4 @@ public interface PhpWebAppService extends WebAppService {
     public static final ConfigKey<List<String>> APP_START_FILE = new BasicConfigKey(
             List.class, "php.app.start.file", "PHP application file to start e.g. main.php, or launch.php");
 
-    @SetFromFlag("app_by_context")
-    public static final ConfigKey<Map<String,String>> APP_BY_CONTEXT = new BasicConfigKey(
-            Map.class, "php.app.by.context", "Map of context keys (path in user-facing URL, typically without slashes) to archives (e.g. zip by URL) to deploy, supporting file: and classpath: prefixes)","");
-
-
 }

@@ -47,7 +47,7 @@ import com.google.common.collect.Sets;
 
 /**
  * An abstract SSH implementation of the {@link AbstractSoftwareProcessDriver}.
- * 
+ *
  * This provides conveniences for clients implementing the install/customize/launch/isRunning/stop lifecycle
  * over SSH.  These conveniences include checking whether software is already installed,
  * creating/using a PID file for some operations, and reading ssh-specific config from the entity
@@ -62,27 +62,27 @@ public abstract class AbstractSoftwareProcessSshDriver extends AbstractSoftwareP
     private volatile String installDir;
     private volatile String runDir;
     private volatile String expandedInstallDir;
-    
+
     /** include this flag in newScript creation to prevent entity-level flags from being included;
      * any SSH-specific flags passed to newScript override flags from the entity,
      * and flags from the entity override flags on the location
      * (where there aren't conflicts, flags from all three are used however) */
-    public static final String IGNORE_ENTITY_SSH_FLAGS = SshEffectorTasks.IGNORE_ENTITY_SSH_FLAGS.getName(); 
+    public static final String IGNORE_ENTITY_SSH_FLAGS = SshEffectorTasks.IGNORE_ENTITY_SSH_FLAGS.getName();
 
     public AbstractSoftwareProcessSshDriver(EntityLocal entity, SshMachineLocation machine) {
         super(entity, machine);
-        
+
         // FIXME this assumes we own the location, and causes warnings about configuring location after deployment;
         // better would be to wrap the ssh-execution-provider to supply these flags
         if (getSshFlags()!=null && !getSshFlags().isEmpty())
             machine.configure(getSshFlags());
-        
+
         // ensure these are set using the routines below, not a global ConfigToAttributes.apply()
         getInstallDir();
         getRunDir();
     }
 
-    /** returns location (tighten type, since we know it is an ssh machine location here) */	
+    /** returns location (tighten type, since we know it is an ssh machine location here) */
     public SshMachineLocation getLocation() {
         return (SshMachineLocation) super.getLocation();
     }
@@ -105,10 +105,10 @@ public abstract class AbstractSoftwareProcessSshDriver extends AbstractSoftwareP
     public String getDownloadFileSuffix() {
         return "tar.gz";
     }
-    
+
     /**
      * @deprecated since 0.5.0; instead rely on {@link DownloadResolverManager} to include local-repo, such as:
-     * 
+     *
      * <pre>
      * {@code
      * DownloadResolver resolver = Entities.newDownloader(this);
@@ -119,20 +119,20 @@ public abstract class AbstractSoftwareProcessSshDriver extends AbstractSoftwareP
     protected String getEntityVersionLabel() {
         return getEntityVersionLabel("_");
     }
-    
+
     /**
      * @deprecated since 0.5.0; instead rely on {@link DownloadResolverManager} to include local-repo
      */
     protected String getEntityVersionLabel(String separator) {
-        return elvis(entity.getEntityType().getSimpleName(),  
+        return elvis(entity.getEntityType().getSimpleName(),
                 entity.getClass().getName())+(getVersion() != null ? separator+getVersion() : "");
     }
-    
+
     protected void setInstallDir(String installDir) {
         this.installDir = installDir;
         entity.setAttribute(SoftwareProcess.INSTALL_DIR, installDir);
     }
-    
+
     public String getInstallDir() {
         if (installDir != null) return installDir;
 
@@ -141,9 +141,9 @@ public abstract class AbstractSoftwareProcessSshDriver extends AbstractSoftwareP
             installDir = existingVal;
             return installDir;
         }
-        
+
         setInstallLabel();
-        
+
         // deprecated in 0.7.0
         Maybe<Object> minstallDir = getEntity().getConfigRaw(SoftwareProcess.INSTALL_DIR, true);
         if (!minstallDir.isPresent() || minstallDir.get()==null) {
@@ -160,10 +160,10 @@ public abstract class AbstractSoftwareProcessSshDriver extends AbstractSoftwareP
         setInstallDir(Os.tidyPath(ConfigToAttributes.apply(getEntity(), SoftwareProcess.INSTALL_DIR)));
         return installDir;
     }
-    
+
     protected void setInstallLabel() {
-        if (getEntity().getConfigRaw(SoftwareProcess.INSTALL_UNIQUE_LABEL, true).isPresent()) return; 
-        getEntity().setConfig(SoftwareProcess.INSTALL_UNIQUE_LABEL, 
+        if (getEntity().getConfigRaw(SoftwareProcess.INSTALL_UNIQUE_LABEL, true).isPresent()) return;
+        getEntity().setConfig(SoftwareProcess.INSTALL_UNIQUE_LABEL,
             getEntity().getEntityType().getSimpleName()+
             (Strings.isNonBlank(getVersion()) ? "_"+getVersion() : "")+
             (Strings.isNonBlank(getInstallLabelExtraSalt()) ? "_"+getInstallLabelExtraSalt() : "") );
@@ -184,10 +184,10 @@ public abstract class AbstractSoftwareProcessSshDriver extends AbstractSoftwareP
         this.runDir = runDir;
         entity.setAttribute(SoftwareProcess.RUN_DIR, runDir);
     }
-    
+
     public String getRunDir() {
         if (runDir != null) return runDir;
-        
+
         String existingVal = getEntity().getAttribute(SoftwareProcess.RUN_DIR);
         if (Strings.isNonBlank(existingVal)) { // e.g. on rebind
             runDir = existingVal;
@@ -217,13 +217,13 @@ public abstract class AbstractSoftwareProcessSshDriver extends AbstractSoftwareP
         if (Strings.isNonBlank(oldVal) && !oldVal.equals(val)) {
             log.info("Resetting expandedInstallDir (to "+val+" from "+oldVal+") for "+getEntity());
         }
-        
+
         getEntity().setAttribute(SoftwareProcess.EXPANDED_INSTALL_DIR, val);
     }
-    
+
     public String getExpandedInstallDir() {
         if (expandedInstallDir != null) return expandedInstallDir;
-        
+
         String untidiedVal = ConfigToAttributes.apply(getEntity(), SoftwareProcess.EXPANDED_INSTALL_DIR);
         if (Strings.isNonBlank(untidiedVal)) {
             expandedInstallDir = Os.tidyPath(untidiedVal);
@@ -241,11 +241,11 @@ public abstract class AbstractSoftwareProcessSshDriver extends AbstractSoftwareP
     protected Map<String, Object> getSshFlags() {
         return SshEffectorTasks.getSshFlags(getEntity(), getMachine());
     }
-    
+
     public int execute(List<String> script, String summaryForLogging) {
         return execute(Maps.newLinkedHashMap(), script, summaryForLogging);
     }
-    
+
     @SuppressWarnings({ "rawtypes", "unchecked" })
     @Override
     public int execute(Map flags2, List<String> script, String summaryForLogging) {
@@ -304,7 +304,7 @@ public abstract class AbstractSoftwareProcessSshDriver extends AbstractSoftwareP
         if (!Os.isAbsolutish(target)) {
             dest = Os.mergePathsUnix(getRunDir(), target);
         }
-        
+
         String data = processTemplate(template, extraSubstitutions);
         int result = getMachine().copyTo(new StringReader(data), dest);
         if (log.isDebugEnabled())
@@ -373,7 +373,7 @@ public abstract class AbstractSoftwareProcessSshDriver extends AbstractSoftwareP
     public int copyResource(Map sshFlags, String source, String target) {
         return copyResource(sshFlags, source, target, false);
     }
-    
+
     /**
      * @param sshFlags Extra flags to be used when making an SSH connection to the entity's machine.
      *                 If the map contains the key {@link #IGNORE_ENTITY_SSH_FLAGS} then only the
@@ -395,7 +395,7 @@ public abstract class AbstractSoftwareProcessSshDriver extends AbstractSoftwareP
 
         // prefix with runDir if relative target
         String dest = Os.isAbsolutish(target) ? target : Os.mergePathsUnix(getRunDir(), target);
-        
+
         if (createParentDir) {
             // don't use File.separator because it's remote machine's format, rather than local machine's
             int lastSlashIndex = dest.lastIndexOf("/");
@@ -404,7 +404,7 @@ public abstract class AbstractSoftwareProcessSshDriver extends AbstractSoftwareP
                 getMachine().execCommands("createParentDir", ImmutableList.of("mkdir -p "+parent));
             }
         }
-        
+
         int result = getMachine().installTo(resource, flags, source, dest);
         if (result == 0) {
             if (log.isDebugEnabled()) {
@@ -434,13 +434,13 @@ public abstract class AbstractSoftwareProcessSshDriver extends AbstractSoftwareP
     public int copyResource(Map<?,?> sshFlags, Reader source, String target) {
         return copyResource(sshFlags, new ReaderInputStream(source), target);
     }
-    
+
     /**
      * Input stream will be closed automatically.
      * <p>
      * If using {@link SshjTool} usage, consider using {@link KnownSizeInputStream} to avoid having
      * to write out stream once to find its size!  
-     * 
+     *
      * @see #copyResource(Map, String, String) for parameter descriptions.
      */
     @SuppressWarnings({ "rawtypes", "unchecked" })
@@ -463,7 +463,7 @@ public abstract class AbstractSoftwareProcessSshDriver extends AbstractSoftwareP
         } finally {
             Tasks.setBlockingDetails(prevBlockingDetails);
         }
-        
+
         if (result == 0) {
             log.debug("copying stream complete; {} on {}", new Object[] { target, getMachine() });
         } else {
@@ -666,8 +666,8 @@ public abstract class AbstractSoftwareProcessSshDriver extends AbstractSoftwareP
                     );
                 } else {
                     s.footer.prepend(
-                            "test -f "+pidFile+" || exit 1", 
-                            "ps -p $(cat "+pidFile+") || exit 1" 
+                            "test -f "+pidFile+" || exit 1",
+                            "ps -p $(cat "+pidFile+") || exit 1"
                     );
                 }
                 // no pid, not running; no process; can't restart, 1 is not running
@@ -700,6 +700,7 @@ public abstract class AbstractSoftwareProcessSshDriver extends AbstractSoftwareP
     public int copyUsingProtocol(String url, String deployTargetDir){
         int result =0;
         if(isHttpsGitURL(url)){
+            log.warn("isHttpGITURL {} {}", this, url);
             result = copyUsingProtocolGitHttps(url, deployTargetDir);
         }
         return result;
@@ -707,7 +708,7 @@ public abstract class AbstractSoftwareProcessSshDriver extends AbstractSoftwareP
 
     //TODO refactor (superClass)
     private  boolean isHttpsGitURL(String url){
-        boolean isHttpsGitURL= false;
+        boolean isHttpsGitURL;
         checkNotNull(url, "git URL is NULL.");
         isHttpsGitURL=checkGitExtension(url)&&checkHttpsPrefix(url);
         return isHttpsGitURL;
@@ -742,6 +743,7 @@ public abstract class AbstractSoftwareProcessSshDriver extends AbstractSoftwareP
 
     private void checkAndInstallGit(){
         int gitInstalled= getMachine().execCommands("checkGitVersion", ImmutableList.of("git --version"));
+        log.warn("gitInstalled {} {} ", (gitInstalled!=0), this);
         if (gitInstalled!=0)
             installGit();
     }

@@ -49,12 +49,14 @@ public abstract class PhpWebAppSoftwareProcessImpl extends SoftwareProcessImpl i
         return getAttribute(DEPLOYED_PHP_APPS);
     }
 
+    protected int getHttpPort(){ return getAttribute(HTTP_PORT);}
+
     protected void setDeployedPhpAppsAttribute(Set<String> deployedPhpApps){
         setAttribute(DEPLOYED_PHP_APPS, deployedPhpApps);
     }
 
     @Override
-    public void connectSensors(){
+    protected void connectSensors(){
         super.connectSensors();
         WebAppServiceMethods.connectWebAppServerPolicies(this);
     }
@@ -76,8 +78,9 @@ public abstract class PhpWebAppSoftwareProcessImpl extends SoftwareProcessImpl i
     }
 
     // TODO thread-safety issues: if multiple concurrent calls, may break (e.g. deployment_wars being reset)
-    public void deployInitialWars() {
+    public void deployInitialApplications() {
         initDeployAppAttribteIfIsNull();
+        //LOG.warn("deploy applications {}: ", this);
         deployInitialAppGitSource();
     }
 
@@ -99,7 +102,7 @@ public abstract class PhpWebAppSoftwareProcessImpl extends SoftwareProcessImpl i
             deployPhpApp(url);
         } catch (RuntimeException e) {
             // Log and propagate, so that log says which entity had problems...
-            LOG.warn("Error deploying '"+url+"' on "+toString()+"; rethrowing...", e);
+            //LOG.warn("Error deploying '"+url+"' on "+toString()+"; rethrowing...", e);
             throw Throwables.propagate(e);
         }
     }
@@ -131,7 +134,7 @@ public abstract class PhpWebAppSoftwareProcessImpl extends SoftwareProcessImpl i
 
         } catch (RuntimeException e) {
             // Log and propagate, so that log says which entity had problems...
-            LOG.warn("Error undeploying '"+targetName+"' on "+toString()+"; rethrowing...", e);
+           // LOG.warn("Error undeploying '"+targetName+"' on "+toString()+"; rethrowing...", e);
             throw Throwables.propagate(e);
         }
     }
@@ -144,8 +147,7 @@ public abstract class PhpWebAppSoftwareProcessImpl extends SoftwareProcessImpl i
     private void updateDeploymentSensorToUndeployAnApp(String targetName){
         initDeployAppAttribteIfIsNull();
         Set<String> deployedPhpApps=getDeployedPhpAppsAttribute();
-        PhpWebAppDriver driver = getDriver();
-        deployedPhpApps.remove( driver.getFilenameContextMapper().convertDeploymentTargetNameToContext(targetName) );
+        deployedPhpApps.remove(targetName);
         setDeployedPhpAppsAttribute(deployedPhpApps);
     }
 

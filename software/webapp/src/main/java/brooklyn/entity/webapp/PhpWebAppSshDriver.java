@@ -9,6 +9,8 @@ import brooklyn.util.ssh.BashCommands;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.util.List;
@@ -21,7 +23,6 @@ import static com.google.common.base.Preconditions.checkNotNull;
  * Created by Jose on 07/07/2014.
  */
 public abstract class PhpWebAppSshDriver extends AbstractSoftwareProcessSshDriver implements PhpWebAppDriver{
-
 
     public PhpWebAppSshDriver(PhpWebAppSoftwareProcessImpl entity, SshMachineLocation machine){
         super(entity, machine);
@@ -62,21 +63,6 @@ public abstract class PhpWebAppSshDriver extends AbstractSoftwareProcessSshDrive
         return entity.getAttribute(WebAppServiceConstants.HTTPS_SSL_CONFIG);
     }
 
-    protected String getSslKeystoreUrl() {
-        HttpsSslConfig ssl = getHttpsSslConfig();
-        return (ssl == null) ? null : ssl.getKeystoreUrl();
-    }
-
-    protected String getSslKeystorePassword() {
-        HttpsSslConfig ssl = getHttpsSslConfig();
-        return (ssl == null) ? null : ssl.getKeystorePassword();
-    }
-
-    protected String getSslKeyAlias() {
-        HttpsSslConfig ssl = getHttpsSslConfig();
-        return (ssl == null) ? null : ssl.getKeyAlias();
-    }
-
     //TODO refactor this method (abstract super class)
     protected String inferRootUrl() {
         if (isProtocolEnabled("https")) {
@@ -104,7 +90,7 @@ public abstract class PhpWebAppSshDriver extends AbstractSoftwareProcessSshDrive
         if (getDeploySubdir()==null)
             throw new IllegalStateException("no deployment directory available for "+this);
         //getRunDir is configured in SoftwareProcess
-        return getRunDir() + "/" + getDeploySubdir();
+        return getRunDir()+"/"+ getDeploySubdir();
     }
 
     @Override
@@ -114,10 +100,12 @@ public abstract class PhpWebAppSshDriver extends AbstractSoftwareProcessSshDrive
         // create a backup
         //getMachine().execCommands("backing up old war", ImmutableList.of(String.format("mv -f %s %s.bak > /dev/null 2>&1", dest, dest))); //back up old file/directory
         String appName=getNameOfRepositoryGitFromHttpsUrl(url);
-        String deployTargetDir=getDeployDir()+"/"+appName;
+        String deployTargetDir=getDeployDir() +"/"+appName;
+        //log.warn("deploy applicarion to folder {}"+deployTargetDir);
         int copyResult = copyUsingProtocol(url, deployTargetDir);
-        log.debug("{} deployed {} to {}:{}: result {}", new Object[]{entity, url, getHostname(), deployTargetDir, copyResult});
-        if (copyResult!=0) log.warn("Problem deploying {} to {}:{} for {}: result {}", new Object[]{url, getHostname(), deployTargetDir, entity, copyResult});
+        log.info("{} deployed {} to {}:{}: result {}", new Object[]{entity, url, getHostname(), deployTargetDir, copyResult});
+        if (copyResult!=0)
+            log.warn("Problem deploying {} to {}:{} for {}: result {}", new Object[]{url, getHostname(), deployTargetDir, entity, copyResult});
         return appName;
     }
 
@@ -135,12 +123,10 @@ public abstract class PhpWebAppSshDriver extends AbstractSoftwareProcessSshDrive
 
     @Override
     public void install() {
-        log.debug("Installing {}", getEntity());
-
         List<String> commands = ImmutableList.<String>builder()
                 .add(BashCommands.installPackage(MutableMap.of("apt", "php5"), null))
                 .build();
-
+        log.info("Installing php5 {}", new Object[]{this});
         newScript(INSTALLING)
                 .body.append(commands)
                 .execute();
