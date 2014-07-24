@@ -689,24 +689,22 @@ public abstract class AbstractSoftwareProcessSshDriver extends AbstractSoftwareP
     public static final String  GIT_EXTENSION = ".git";
     public final static String HTTPS_PREFIX="https://";
 
-    //TODO Refactor using a Factory
+
     public String getNameOfRepositoryGitFromHttpsUrl(String url){
         String nameOfRepository="";
         nameOfRepository=url.substring(url.lastIndexOf("/")+1, url.lastIndexOf("."));
         return nameOfRepository;
     }
 
-    //TODO Refactor using a Fabric to provide a polymorphic object to copy and APP from https:git, ssh:git, svn and so on
     public int copyUsingProtocol(String url, String deployTargetDir){
         int result =0;
         if(isHttpsGitURL(url)){
-            log.warn("isHttpGITURL {} {}", this, url);
+            log.info("Git. Es una direccion git {} {}", new Object[]{this, url});
             result = copyUsingProtocolGitHttps(url, deployTargetDir);
         }
         return result;
     }
 
-    //TODO refactor (superClass)
     private  boolean isHttpsGitURL(String url){
         boolean isHttpsGitURL;
         checkNotNull(url, "git URL is NULL.");
@@ -730,32 +728,37 @@ public abstract class AbstractSoftwareProcessSshDriver extends AbstractSoftwareP
         checkAndInstallGit();
         List<String> commands = ImmutableList.<String>builder()
                 .add(String.format("git clone %s %s", url, targetDir))
-                        //.add(BashCommands.sudo(String.format("chown -R %1$s:%1$s %2$s", APP_USER, targetDir)))
                 .build();
-        //The user will be need some permissions to the targetDir, e.g. www-data:www-data in apache
-        //And add the folder to the enable service
+        log.info("Coping git repository url: {} to {}", new Object[]{url, targetDir});
         int result= newScript(CUSTOMIZING)
                 .body.append(commands)
                 .execute();
-
         return result;
     }
 
     private void checkAndInstallGit(){
         int gitInstalled= getMachine().execCommands("checkGitVersion", ImmutableList.of("git --version"));
-        log.warn("gitInstalled {} {} ", (gitInstalled!=0), this);
+        log.info("Git is installed {} {} ", new Object[]{gitInstalled==0, this});
         if (gitInstalled!=0)
             installGit();
     }
 
+    //TODO modify this script using new scrip functionality
     private int installGit(){
-        int result;
-        log.debug("Installing{}", getEntity());
-        List<String> commands= ImmutableList.<String>builder().add(BashCommands.
-                installPackage(MutableMap.of("apt", "git"), null)).build();
-        result=newScript(INSTALLING).body.append(commands).execute();
-        return result;
+        int resultOfCommand;
+        log.info("Installing git {}", new Object[]{this});
+//        log.info("Installing GIT {}", new Object[]{ getEntity()});
+//
+//        List<String> commands= ImmutableList.<String>builder().add(BashCommands.
+//                installPackage(MutableMap.of("apt", "git"), null)).build();
+//        resultOfCommand=newScript(INSTALLING).body.append(commands).execute();
+        resultOfCommand = getMachine().execCommands("install Git", ImmutableList.of("sudo apt-get -y install git"));
+        if(resultOfCommand!=0)
+            log.warn("Installing problem installing result {}", resultOfCommand);
+
+        return resultOfCommand;
     }
+
 
 
 }

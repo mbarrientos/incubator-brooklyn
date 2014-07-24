@@ -59,6 +59,7 @@ public class ApacheServerIntegrationTest {
             integrationTestHttp();
         }
         catch (Exception e){
+            log.warn("Exception catched {} ", new Object[]{e.fillInStackTrace()});
             tearDown();
             throw e;
         }
@@ -67,6 +68,7 @@ public class ApacheServerIntegrationTest {
     private void integrationTestHttp() throws Exception{
         final ApacheServer server = app.createAndManageChild(EntitySpec.create(ApacheServer.class)
                 .configure("app_git_repo_url", gitRepoURLApp)
+                .configure("http_port", "81")
                 .configure(ApacheServer.ENABLED_PROTOCOLS, ImmutableSet.of("http")));
         //.configure(JBoss7Server.HTTPS_SSL_CONFIG, new HttpsSslConfig().keyAlias("myname").keystorePassword("mypass").keystoreUrl(keystoreFile.getAbsolutePath())));
 

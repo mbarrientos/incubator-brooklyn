@@ -94,6 +94,7 @@ public class ApacheSshDriver extends PhpWebAppSshDriver implements ApacheDriver 
 
     @Override
     public void customize(){
+
         startApacheIfIsNotRunning();
         newScript(CUSTOMIZING)
                 .body.append(
@@ -107,7 +108,7 @@ public class ApacheSshDriver extends PhpWebAppSshDriver implements ApacheDriver 
         ).execute();
 
         LOG.info("deployInit initial applications from {}", new Object[]{this});
-        //getEntity().deployInitialApplications();
+        getEntity().deployInitialApplications();
     }
 
     private void startApacheIfIsNotRunning(){
@@ -119,6 +120,7 @@ public class ApacheSshDriver extends PhpWebAppSshDriver implements ApacheDriver 
         return  getMachine().execCommands("startApacheIfItIsNeeded", ImmutableList.of("service apache2 start"));
     }
 
+
     private String disableCurrentDeployRunDir(){
 
         String result = String.format(
@@ -127,10 +129,9 @@ public class ApacheSshDriver extends PhpWebAppSshDriver implements ApacheDriver 
                         "FILENAME=$(basename $file)\n" +
                         "exec a2dissite $FILENAME | true\n" +
                         "done\n" +
-                        "%s\n",
+                        "\n",
                 getEntity().getConfigurationDir(),
-                getEntity().getAvailableSitesConfigurationFolder(),
-                realoadApacheService());
+                getEntity().getAvailableSitesConfigurationFolder());
         return result;
     }
 
@@ -151,7 +152,7 @@ public class ApacheSshDriver extends PhpWebAppSshDriver implements ApacheDriver 
         String result= String.format(
                 "%s"+
                 "cat > %s%s/BrooklynDeployRunDir.conf << \"EOF\"\n" +
-                "<VirtualHost *:80>\n" +
+                "<VirtualHost *:%s>\n" +
                 "ServerAdmin webmaster@localhost\n" +
                 "DocumentRoot %s\n" +
                 "ErrorLog ${APACHE_LOG_DIR}/error.log\n" +
@@ -162,6 +163,7 @@ public class ApacheSshDriver extends PhpWebAppSshDriver implements ApacheDriver 
                 createFolderDeployRunDir(),
                 getEntity().getConfigurationDir(),
                 getEntity().getAvailableSitesConfigurationFolder(),
+                getEntity().getHttpPort(),
                 getEntity().getDeployRunDir(),
                 changePermissionsOfDeployRunDir());
        return result;
@@ -206,11 +208,10 @@ public class ApacheSshDriver extends PhpWebAppSshDriver implements ApacheDriver 
     private String configureHttpPort(){
         String result;
         result= String.format(
-                "cat <<EOT >> %s/apache2.conf\n" +
-                        "Listen %s\n" +
-                        "EOT\n",
-                getEntity().getConfigurationDir(),
-                getEntity().getHttpPort());
+                "sed -i 's@Listen[ 0-9]\\+@Listen %s@g' %s/ports.conf",
+                getEntity().getHttpPort(),
+                getEntity().getConfigurationDir()
+        );
         return result;
     }
 
@@ -235,6 +236,7 @@ public class ApacheSshDriver extends PhpWebAppSshDriver implements ApacheDriver 
     @Override
     public void stop() {
         newScript(MutableMap.of(USE_PID_FILE, true), STOPPING).environmentVariablesReset().execute();
+
     }
 
     @Override
