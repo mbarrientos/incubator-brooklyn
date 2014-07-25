@@ -100,7 +100,8 @@ public abstract class PhpWebAppSshDriver extends AbstractSoftwareProcessSshDrive
         // create a backup
         //getMachine().execCommands("backing up old war", ImmutableList.of(String.format("mv -f %s %s.bak > /dev/null 2>&1", dest, dest))); //back up old file/directory
         String appName=getNameOfRepositoryGitFromHttpsUrl(url);
-        String deployTargetDir=getDeployDir() +"/"+appName;
+        //String deployTargetDir=getDeployDir()+"/"+appName;
+        String deployTargetDir=Os.mergePathsUnix(getDeployDir(), appName);
         //log.warn("deploy applicarion to folder {}"+deployTargetDir);
         int copyResult = copyUsingProtocol(url, deployTargetDir);
         log.info("{} deployed {} to {}:{}: result {}", new Object[]{entity, url, getHostname(), deployTargetDir, copyResult});

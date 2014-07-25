@@ -4,6 +4,7 @@ import brooklyn.entity.basic.ApplicationBuilder;
 import brooklyn.entity.basic.Entities;
 import brooklyn.entity.proxying.EntitySpec;
 import brooklyn.entity.webapp.HttpsSslConfig;
+import brooklyn.entity.webapp.PhpWebAppSoftwareProcess;
 import brooklyn.entity.webapp.jboss.JBoss7Server;
 import brooklyn.location.LocationSpec;
 import brooklyn.location.basic.LocalhostMachineProvisioningLocation;
@@ -19,6 +20,8 @@ import org.slf4j.LoggerFactory;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
+
+import java.util.Set;
 
 import static org.testng.Assert.assertEquals;
 
@@ -76,11 +79,15 @@ public class ApacheServerIntegrationTest {
         app.start(ImmutableList.of(loc));
 
         String httpUrl = "http://"+server.getAttribute(ApacheServer.HOSTNAME)+":"+server.getAttribute(ApacheServer.HTTP_PORT)+"/";
-        log.warn("httpURL - VALUE generate by composition: --> "+httpUrl);
-        log.warn("ROOT_URL: --> "+server.getAttribute(ApacheServer.ROOT_URL).toLowerCase());
+        log.info("httpURL - VALUE generate by composition: --> "+httpUrl);
+        log.info("ROOT_URL: --> "+server.getAttribute(ApacheServer.ROOT_URL).toLowerCase());
         assertEquals(server.getAttribute(ApacheServer.ROOT_URL).toLowerCase(), httpUrl.toLowerCase());
-        System.out.println("JOSE--FinDelTest");
 
+        Set<String> applicationsDeployed = server.getAttribute(PhpWebAppSoftwareProcess.DEPLOYED_PHP_APPS);
+        log.info("applicationDeployedNumber {}", new Object[]{applicationsDeployed.size()});
+        for(String application: applicationsDeployed){
+            log.info("applicationDeployed{}", new Object[]{application});
+        }
     }
 
 }

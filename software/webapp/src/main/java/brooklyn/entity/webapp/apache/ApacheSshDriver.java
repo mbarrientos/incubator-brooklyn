@@ -94,7 +94,6 @@ public class ApacheSshDriver extends PhpWebAppSshDriver implements ApacheDriver 
 
     @Override
     public void customize(){
-
         startApacheIfIsNotRunning();
         newScript(CUSTOMIZING)
                 .body.append(
@@ -225,23 +224,29 @@ public class ApacheSshDriver extends PhpWebAppSshDriver implements ApacheDriver 
     @Override
     public boolean isRunning() {
         boolean isApacheRunning=false;
-        int resultOfCommand = getMachine().execCommands("apacheIsRunning", ImmutableList.of("service apache2 status"));
+        //int resultOfCommand = getMachine().execCommands("apacheIsRunning", ImmutableList.of("service apache2 status"));
+        String command="service apache2 status";
+        int resultOfCommand=newScript(STOPPING)
+                .body.append(command).execute();
         if (resultOfCommand==0)
             isApacheRunning=true;
         return  isApacheRunning;
     }
 
 
-    //TODO add service apache2 stop to the command
+    //TODO merge with the stopApacheMethod in any way
     @Override
     public void stop() {
-        newScript(MutableMap.of(USE_PID_FILE, true), STOPPING).environmentVariablesReset().execute();
+
+        String command="service apache2 stop";
+        newScript(STOPPING)
+                .body.append(command).execute();
 
     }
 
     @Override
     public void kill() {
-        newScript(MutableMap.of(USE_PID_FILE, true), KILLING).execute();
+        stop();
     }
 
 }

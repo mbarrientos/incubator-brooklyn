@@ -747,7 +747,6 @@ public abstract class AbstractSoftwareProcessSshDriver extends AbstractSoftwareP
     private int installGit(){
         int resultOfCommand;
         log.info("Installing git {}", new Object[]{this});
-//        log.info("Installing GIT {}", new Object[]{ getEntity()});
 //
 //        List<String> commands= ImmutableList.<String>builder().add(BashCommands.
 //                installPackage(MutableMap.of("apt", "git"), null)).build();
@@ -755,7 +754,6 @@ public abstract class AbstractSoftwareProcessSshDriver extends AbstractSoftwareP
         resultOfCommand = getMachine().execCommands("install Git", ImmutableList.of("sudo apt-get -y install git"));
         if(resultOfCommand!=0)
             log.warn("Installing problem installing result {}", resultOfCommand);
-
         return resultOfCommand;
     }
 
