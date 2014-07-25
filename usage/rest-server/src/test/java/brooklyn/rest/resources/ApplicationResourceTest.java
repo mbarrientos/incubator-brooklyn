@@ -1,3 +1,21 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
 package brooklyn.rest.resources;
 
 import static com.google.common.collect.Iterables.find;
@@ -23,6 +41,8 @@ import org.testng.annotations.Test;
 
 import brooklyn.entity.Application;
 import brooklyn.entity.basic.BasicApplication;
+import brooklyn.entity.basic.BasicEntity;
+import brooklyn.entity.basic.Entities;
 import brooklyn.entity.basic.EntityFunctions;
 import brooklyn.entity.basic.Lifecycle;
 import brooklyn.location.Location;
@@ -200,6 +220,28 @@ public class ApplicationResourceTest extends BrooklynRestResourceTest {
     assertEquals(client().resource(appUri).get(ApplicationSummary.class).getSpec().getName(), "simple-app-yaml");
   }
 
+  @SuppressWarnings("deprecation")
+  @Test
+  public void testReferenceCatalogEntity() throws Exception {
+      getManagementContext().getCatalog().addItem(BasicEntity.class);
+
+      String yaml = "{ name: simple-app-yaml, location: localhost, services: [ { serviceType: " + BasicEntity.class.getName() + " } ] }";
+      
+    ClientResponse response = client().resource("/v1/applications")
+        .entity(yaml, "application/x-yaml")
+        .post(ClientResponse.class);
+    assertTrue(response.getStatus()/100 == 2, "response is "+response);
+    
+    // Expect app to be running
+    URI appUri = response.getLocation();
+    waitForApplicationToBeRunning(response.getLocation());
+    assertEquals(client().resource(appUri).get(ApplicationSummary.class).getSpec().getName(), "simple-app-yaml");
+    
+    ClientResponse response2 = client().resource(appUri.getPath())
+        .delete(ClientResponse.class);
+    assertEquals(response2.getStatus(), Response.Status.ACCEPTED.getStatusCode());
+  }
+
   @Test
   public void testDeployWithInvalidEntityType() {
     try {
@@ -314,6 +356,12 @@ public class ApplicationResourceTest extends BrooklynRestResourceTest {
     
     Collection groupMembers = (Collection) groupDetails.get("members");
     Assert.assertNotNull(groupMembers);
+    
+    for (Application appi: getManagementContext().getApplications()) {
+        Entities.dumpInfo(appi);
+    }
+    log.info("MEMBERS: "+groupMembers);
+    
     Assert.assertEquals(groupMembers.size(), 3); // includes the app too?!
     Map entityMemberDetails = (Map) Iterables.find(groupMembers, withValueForKey("name", "simple-ent"), null);
     Map groupMemberDetails = (Map) Iterables.find(groupMembers, withValueForKey("name", "simple-group"), null);

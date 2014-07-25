@@ -1,3 +1,21 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
 package brooklyn.util.flags;
 
 import groovy.lang.Closure;
@@ -236,11 +254,18 @@ public class TypeCoercions {
             return (T) value;
         }
         
-        // boolean can only be cast to itself
         if (targetWrapType == Boolean.class) {
-            return (T) value;
+            // only char can be mapped to boolean
+            // (we could say 0=false, nonzero=true, but there is no compelling use case so better
+            // to encourage users to write as boolean)
+            if (sourceWrapType == Character.class)
+                return (T) stringToPrimitive(value.toString(), targetType);
+            
+            throw new ClassCoercionException("Cannot cast "+sourceWrapType+" ("+value+") to "+targetType);
         } else if (sourceWrapType == Boolean.class) {
-            return (T) value;
+            // boolean can't cast to anything else
+            
+            throw new ClassCoercionException("Cannot cast "+sourceWrapType+" ("+value+") to "+targetType);
         }
         
         // for whole-numbers (where casting to long won't lose anything)...
@@ -294,7 +319,6 @@ public class TypeCoercions {
         }
     }
     
-    @SuppressWarnings("unchecked")
     public static boolean isPrimitiveOrBoxer(Class<?> type) {
         return Primitives.allPrimitiveTypes().contains(type) || Primitives.allWrapperTypes().contains(type);
     }
@@ -310,6 +334,20 @@ public class TypeCoercions {
             } else if (value.length() != 1) {
                 throw new ClassCoercionException("Cannot coerce type String to "+targetType.getCanonicalName()+" ("+value+"): adapting failed");
             }
+        }
+        
+        // For boolean we could use valueOf, but that returns false whereas we'd rather throw errors on bad values
+        if (targetType == Boolean.class || targetType == boolean.class) {
+            if ("true".equalsIgnoreCase(value)) return (T) Boolean.TRUE;
+            if ("false".equalsIgnoreCase(value)) return (T) Boolean.FALSE;
+            if ("yes".equalsIgnoreCase(value)) return (T) Boolean.TRUE;
+            if ("no".equalsIgnoreCase(value)) return (T) Boolean.FALSE;
+            if ("t".equalsIgnoreCase(value)) return (T) Boolean.TRUE;
+            if ("f".equalsIgnoreCase(value)) return (T) Boolean.FALSE;
+            if ("y".equalsIgnoreCase(value)) return (T) Boolean.TRUE;
+            if ("n".equalsIgnoreCase(value)) return (T) Boolean.FALSE;
+            
+            throw new ClassCoercionException("Cannot coerce type String to "+targetType.getCanonicalName()+" ("+value+"): adapting failed"); 
         }
         
         // Otherwise can use valueOf reflectively
