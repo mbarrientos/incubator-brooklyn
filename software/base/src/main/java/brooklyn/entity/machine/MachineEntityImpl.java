@@ -64,18 +64,17 @@ public class MachineEntityImpl extends EmptySoftwareProcessImpl implements Machi
 
         // Sensors linux-specific
         if (!getMachine().getMachineDetails().getOsDetails().isLinux()) return;
-
         sensorFeed = SshFeed.builder()
                 .entity(this)
                 .period(Duration.THIRTY_SECONDS)
                 .poll(new SshPollConfig<Double>(LOAD_AVERAGE)
-                        .command("uptime")
+                        .command("cat /proc/loadavg | awk '{print $1}'")
                         .onFailureOrException(Functions.constant(-1d))
                         .onSuccess(new Function<SshPollValue, Double>() {
                             @Override
                             public Double apply(SshPollValue input) {
-                                String loadAverage = Strings.getFirstWordAfter(input.getStdout(), "load average:").replace(",", "");
-                                return Double.valueOf(loadAverage);
+                                String loadAverage = input.getStdout();
+                                return Double.valueOf(loadAverage) /  getMachine().getMachineDetails().getHardwareDetails().getCpuCount();
                             }
                         }))
                 .poll(new SshPollConfig<Double>(CPU_USAGE)
