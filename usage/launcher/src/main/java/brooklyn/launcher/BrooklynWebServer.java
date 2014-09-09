@@ -235,7 +235,7 @@ public class BrooklynWebServer {
     
     /** URL for accessing this web server (root context) */
     public String getRootUrl() {
-        String address = (publicAddress != null) ? publicAddress.toString() : getAddress().getHostName();
+        String address = (publicAddress != null) ? publicAddress.toString() : getAddress().getCanonicalHostName();
         if (getActualPort()>0){
             String protocol = getHttpsEnabled()?"https":"http";
             return protocol+"://"+address+":"+getActualPort()+"/";
