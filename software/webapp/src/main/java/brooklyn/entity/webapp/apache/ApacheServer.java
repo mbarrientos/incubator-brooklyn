@@ -17,8 +17,7 @@ import brooklyn.event.basic.PortAttributeSensorAndConfigKey;
 import brooklyn.event.basic.Sensors;
 import brooklyn.util.flags.SetFromFlag;
 
-@Catalog(name="Apache Web Server", description="ApacheServer:  is a web server application which can be connect" +
-        "with ", iconUrl="classpath:///jboss-logo.png")
+@Catalog(name="HTTP Server", description="Apache HTTP Server Project is an open-source HTTP server")
 @ImplementedBy(ApacheServerImpl.class)
 public interface ApacheServer extends PhpWebAppSoftwareProcess, PhpWebAppService, HasShortName {
 
@@ -90,12 +89,12 @@ public interface ApacheServer extends PhpWebAppSoftwareProcess, PhpWebAppService
             Sensors.newDoubleSensor("apache.request.per.sec", "Request per sec managed by the server");
 
     @SetFromFlag("bytes_per_sec")
-    AttributeSensor<Long> BYTES_PER_SEC=
-            Sensors.newLongSensor("apache.bytes.per.sec", "Bytes per second");
+    AttributeSensor<Double> BYTES_PER_SEC=
+            Sensors.newDoubleSensor("apache.bytes.per.sec", "Bytes per second");
 
     @SetFromFlag("bytes_per_req")
-    AttributeSensor<Long> BYTES_PER_REQ=
-            Sensors.newLongSensor("apache.bytes.per.req", "Bytes per requests");
+    AttributeSensor<Double> BYTES_PER_REQ=
+            Sensors.newDoubleSensor("apache.bytes.per.req", "Bytes per requests");
 
     @SetFromFlag("busy_workers")
         AttributeSensor<Integer> BUSY_WORKERS=

@@ -9,7 +9,6 @@ import brooklyn.event.feed.function.FunctionPollConfig;
 import brooklyn.event.feed.http.HttpFeed;
 import brooklyn.event.feed.http.HttpPollConfig;
 import brooklyn.event.feed.http.HttpValueFunctions;
-import brooklyn.event.feed.http.JsonFunctions;
 import brooklyn.policy.Enricher;
 import brooklyn.util.guava.Functionals;
 import com.google.common.base.Function;
@@ -154,12 +153,12 @@ public class ApacheServerImpl extends PhpWebAppSoftwareProcessImpl implements Ap
                 .poll(new HttpPollConfig<Double>(REQUEST_PER_SEC).onSuccess(
                         Functionals.chain(HttpValueFunctions.stringContentsFunction(),
                                 parseApacheStatus("ReqPerSec"), cast(Double.class))))
-                .poll(new HttpPollConfig<Long>(BYTES_PER_SEC).onSuccess(
+                .poll(new HttpPollConfig<Double>(BYTES_PER_SEC).onSuccess(
                         Functionals.chain(HttpValueFunctions.stringContentsFunction(),
-                                parseApacheStatus("BytesPerSec"), cast(Long.class))))
-                .poll(new HttpPollConfig<Long>(BYTES_PER_REQ).onSuccess(
+                                parseApacheStatus("BytesPerSec"), cast(Double.class))))
+                .poll(new HttpPollConfig<Double>(BYTES_PER_REQ).onSuccess(
                         Functionals.chain(HttpValueFunctions.stringContentsFunction(),
-                                parseApacheStatus("BytesPerReq"), cast(Long.class))))
+                                parseApacheStatus("BytesPerReq"), cast(Double.class))))
                 .poll(new HttpPollConfig<Integer>(BUSY_WORKERS).onSuccess(
                         Functionals.chain(HttpValueFunctions.stringContentsFunction(),
                                 parseApacheStatus("BusyWorkers"), cast(Integer.class))))

@@ -6,16 +6,9 @@ import brooklyn.entity.annotation.EffectorParam;
 import brooklyn.entity.basic.ConfigKeys;
 import brooklyn.entity.basic.MethodEffector;
 import brooklyn.entity.basic.SoftwareProcess;
-import brooklyn.entity.basic.SoftwareProcessDriver;
 import brooklyn.entity.proxying.ImplementedBy;
 import brooklyn.event.AttributeSensor;
 import brooklyn.event.basic.BasicAttributeSensor;
-import brooklyn.event.basic.BasicAttributeSensorAndConfigKey;
-import brooklyn.event.basic.PortAttributeSensorAndConfigKey;
-import brooklyn.util.flags.SetFromFlag;
-import brooklyn.event.basic.BasicAttributeSensorAndConfigKey.StringAttributeSensorAndConfigKey;
-
-
 import java.util.Set;
 
 
@@ -31,8 +24,9 @@ public interface PhpWebAppSoftwareProcess extends SoftwareProcess, PhpWebAppServ
     ConfigKey<String> SUGGESTED_VERSION= ConfigKeys.newConfigKeyWithDefault(SoftwareProcess.SUGGESTED_VERSION, "5");
 
     /**
-     * So, the download method have to define the path.
-     * E.g. a git repo create the folder when the app will be download.
+     * It deploys an application which is stored in a git repository.
+     * The repo is cloned using the name specified by the targetName.
+     * So, the target name is used as id to deploy the application in the server.
      * @param url A url of the git repo where the application are stored. Currently, https url are supported.
      * @param targetName name of the application used to deploy it.
      */
@@ -42,9 +36,9 @@ public interface PhpWebAppSoftwareProcess extends SoftwareProcess, PhpWebAppServ
             @EffectorParam(name="targetName", description="Application Name") String targetName);
 
     /**
-     * So, the download method have to define the path.
-     * E.g. a git repo create the folder when the app will be download.
-     * @param url A url of the git repo where the application are stored. Currently, https url are supported.
+     * It deploys an application which is packaged like a tarball from a url.
+     * The application is downloaded and unpackaged in the folder specified by the targetName.
+     * @param url A url of the tarball resource where the application are stored.
      * @param targetName name of the application used to deploy it.
      */
     @Effector(description="Deploys the given artifact, from a source URL, to a given deployment filename/context")

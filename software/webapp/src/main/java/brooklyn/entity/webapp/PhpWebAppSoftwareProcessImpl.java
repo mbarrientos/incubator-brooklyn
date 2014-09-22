@@ -4,17 +4,14 @@ import brooklyn.entity.Entity;
 import brooklyn.entity.annotation.Effector;
 import brooklyn.entity.annotation.EffectorParam;
 import brooklyn.entity.basic.SoftwareProcessImpl;
-import brooklyn.location.access.BrooklynAccessUtils;
+import brooklyn.util.text.Strings;
 import com.google.common.base.Throwables;
 import com.google.common.collect.Sets;
-import com.google.common.net.HostAndPort;
 import org.slf4j.LoggerFactory;
-
 import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import java.util.*;
-
+import java.util.LinkedHashMap;
+import java.util.Set;
+import java.util.Map;
 import static com.google.common.base.Preconditions.checkNotNull;
 
 
@@ -97,7 +94,7 @@ public abstract class PhpWebAppSoftwareProcessImpl extends SoftwareProcessImpl i
 
     private String inferCorrectAppGitName(){
         String result;
-        if(getConfig(APP_NAME)==null || getConfig(APP_NAME).equals("")){
+        if(Strings.isEmpty(getConfig(APP_NAME))){
             result=getDriver().getSourceNameResolver().getNameOfRepositoryGitFromHttpsUrl(getConfig(APP_GIT_REPO_URL));
         }
         else{
@@ -116,7 +113,7 @@ public abstract class PhpWebAppSoftwareProcessImpl extends SoftwareProcessImpl i
 
     private String  inferCorrectAppTarballName(){
         String result;
-        if(getConfig(APP_NAME)==null || getConfig(APP_NAME).equals("")){
+        if(Strings.isEmpty(getConfig(APP_NAME))){
             result=getDriver().getSourceNameResolver().getIdOfTarballFromUrl(getConfig(APP_TARBALL_URL));
         }
         else{
@@ -125,10 +122,7 @@ public abstract class PhpWebAppSoftwareProcessImpl extends SoftwareProcessImpl i
         return result;
     }
 
-    @Effector(description="Deploys the given artifact, from a source URL, to a given deployment filename/context")
-    public void deployGitResource(
-            @EffectorParam(name="url", description="URL of git Repo file") String url,
-            @EffectorParam(name="targetName", description="Application Name") String targetName) {
+    public void deployGitResource(String url,String targetName) {
         try {
             deployGitPhpApp(url, targetName);
         } catch (RuntimeException e) {
@@ -153,10 +147,7 @@ public abstract class PhpWebAppSoftwareProcessImpl extends SoftwareProcessImpl i
         setDeployedPhpAppsAttribute(deployedPhpApps);
     }
 
-    @Effector(description="Deploys the given artifact, from a source URL, to a given deployment filename/context")
-    public void deployTarballResource(
-            @EffectorParam(name="url", description="URL of tarball resource") String url,
-            @EffectorParam(name="targetName", description="Application Name") String targetName){
+    public void deployTarballResource( String url, String targetName){
         try {
             deployTarballPhpApp(url, targetName);
         } catch (RuntimeException e) {

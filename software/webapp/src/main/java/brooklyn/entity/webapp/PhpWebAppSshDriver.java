@@ -3,19 +3,9 @@ package brooklyn.entity.webapp;
 import brooklyn.entity.basic.AbstractSoftwareProcessSshDriver;
 import brooklyn.entity.basic.Attributes;
 import brooklyn.location.basic.SshMachineLocation;
-import brooklyn.util.collections.MutableMap;
-import brooklyn.util.os.Os;
-import brooklyn.util.ssh.BashCommands;
-import brooklyn.util.text.Strings;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
-import com.sun.javafx.binding.StringFormatter;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import java.io.File;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -170,6 +160,9 @@ public abstract class PhpWebAppSshDriver extends AbstractSoftwareProcessSshDrive
 //                .body.append(commands)
 //                .execute();
         int resultOfCommand = getMachine().execCommands("install php", ImmutableList.of("sudo apt-get -y install php5"));
+        if(resultOfCommand!=0)
+            log.warn("Installing problem installing php result {}", resultOfCommand);
+        resultOfCommand = getMachine().execCommands("install php-mysql", ImmutableList.of("sudo apt-get -y install php5-mysql"));
         if(resultOfCommand!=0)
             log.warn("Installing problem installing php result {}", resultOfCommand);
     }

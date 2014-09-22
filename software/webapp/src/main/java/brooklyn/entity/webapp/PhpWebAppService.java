@@ -3,9 +3,7 @@ package brooklyn.entity.webapp;
 import brooklyn.config.ConfigKey;
 import brooklyn.event.basic.BasicConfigKey;
 import brooklyn.util.flags.SetFromFlag;
-
 import java.util.List;
-import java.util.Map;
 
 
 public interface PhpWebAppService extends WebAppService {
