@@ -818,7 +818,7 @@ public abstract class AbstractSoftwareProcessSshDriver extends AbstractSoftwareP
     public int copyUsingProtocol(String url, String deployTargetDir){
         int result =0;
         if(isHttpsGitURL(url)){
-            log.info("Git. Es una direccion git {} {}", new Object[]{this, url});
+            log.info("Git: it is a git repo {} {}", new Object[]{this, url});
             result = copyUsingProtocolGitHttps(url, deployTargetDir);
         }
         return result;
