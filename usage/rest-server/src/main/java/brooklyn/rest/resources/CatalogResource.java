@@ -18,15 +18,14 @@
  */
 package brooklyn.rest.resources;
 
-import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
 import javax.annotation.Nullable;
+import javax.ws.rs.Consumes;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
 import javax.ws.rs.core.Response.Status;
@@ -38,6 +37,7 @@ import brooklyn.catalog.CatalogItem;
 import brooklyn.catalog.CatalogPredicates;
 import brooklyn.catalog.internal.BasicBrooklynCatalog;
 import brooklyn.catalog.internal.CatalogDto;
+import brooklyn.catalog.internal.CatalogUtils;
 import brooklyn.entity.Entity;
 import brooklyn.entity.proxying.EntitySpec;
 import brooklyn.policy.Policy;
@@ -52,15 +52,14 @@ import brooklyn.rest.util.WebResourceUtils;
 import brooklyn.util.ResourceUtils;
 import brooklyn.util.collections.MutableSet;
 import brooklyn.util.exceptions.Exceptions;
+import brooklyn.util.stream.Streams;
 import brooklyn.util.text.StringPredicates;
 import brooklyn.util.text.Strings;
 
-import com.google.common.base.Charsets;
 import com.google.common.base.Function;
 import com.google.common.base.Predicate;
 import com.google.common.base.Predicates;
 import com.google.common.collect.FluentIterable;
-import com.google.common.io.CharStreams;
 import com.google.common.io.Files;
 import com.sun.jersey.core.header.FormDataContentDisposition;
 
@@ -77,12 +76,14 @@ public class CatalogResource extends AbstractBrooklynRestResource implements Cat
     };
 
     @Override
-    public Response createFromMultipart(InputStream uploadedInputStream, FormDataContentDisposition fileDetail) throws IOException {
-      return create(CharStreams.toString(new InputStreamReader(uploadedInputStream, Charsets.UTF_8)));
+    @Consumes(MediaType.MULTIPART_FORM_DATA)
+    public Response createFromMultipart(InputStream uploadedInputStream, FormDataContentDisposition fileDetail) {
+      return create(Streams.readFullyString(uploadedInputStream));
     }
 
     static Set<String> missingIcons = MutableSet.of();
     
+    @SuppressWarnings("unchecked")
     @Override
     public Response create(String yaml) {
         CatalogItem<?,?> item;
@@ -166,6 +167,7 @@ public class CatalogResource extends AbstractBrooklynRestResource implements Cat
         return getCatalogItemSummariesMatchingRegexFragment(CatalogPredicates.IS_POLICY, regex, fragment);
     }
     
+    @SuppressWarnings("unchecked")
     @Override
     public CatalogItemSummary getPolicy(String policyId) {
         CatalogItem<?,?> result = brooklyn().getCatalog().getCatalogItem(policyId);
@@ -183,12 +185,12 @@ public class CatalogResource extends AbstractBrooklynRestResource implements Cat
         if (Strings.isNonEmpty(regex))
             filters.add(CatalogPredicates.xml(StringPredicates.containsRegex(regex)));
         if (Strings.isNonEmpty(fragment))
-            filters.add(CatalogPredicates.xml(StringPredicates.containsLiteralCaseInsensitive(fragment)));
+            filters.add(CatalogPredicates.xml(StringPredicates.containsLiteralIgnoreCase(fragment)));
 
         return FluentIterable.from(brooklyn().getCatalog().getCatalogItems())
                 .filter(Predicates.and(filters))
                 .transform(TO_CATALOG_ITEM_SUMMARY)
-                .toSortedList(SummaryComparators.idComparator());
+                .toSortedList(SummaryComparators.displayNameComparator());
     }
 
     @Override
@@ -208,7 +210,7 @@ public class CatalogResource extends AbstractBrooklynRestResource implements Cat
             
             MediaType mime = WebResourceUtils.getImageMediaTypeFromExtension(Files.getFileExtension(url));
             try {
-                Object content = ResourceUtils.create(result.newClassLoadingContext(mgmt())).getResourceFromUrl(url);
+                Object content = ResourceUtils.create(CatalogUtils.newClassLoadingContext(mgmt(), result)).getResourceFromUrl(url);
                 return Response.ok(content, mime).build();
             } catch (Exception e) {
                 Exceptions.propagateIfFatal(e);

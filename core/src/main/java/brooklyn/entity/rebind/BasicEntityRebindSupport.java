@@ -30,12 +30,13 @@ import brooklyn.config.ConfigKey;
 import brooklyn.enricher.basic.AbstractEnricher;
 import brooklyn.entity.Effector;
 import brooklyn.entity.Entity;
-import brooklyn.entity.Group;
 import brooklyn.entity.basic.AbstractEntity;
+import brooklyn.entity.basic.AbstractGroupImpl;
 import brooklyn.entity.basic.EntityInternal;
 import brooklyn.entity.basic.EntityLocal;
 import brooklyn.entity.rebind.dto.MementosGenerators;
 import brooklyn.event.AttributeSensor;
+import brooklyn.event.feed.AbstractFeed;
 import brooklyn.location.Location;
 import brooklyn.mementos.EntityMemento;
 import brooklyn.policy.basic.AbstractPolicy;
@@ -81,6 +82,7 @@ public class BasicEntityRebindSupport extends AbstractBrooklynObjectRebindSuppor
             try {
                 AttributeSensor<?> key = entry.getKey();
                 Object value = entry.getValue();
+                @SuppressWarnings("unused") // just to ensure we can load the declared type? or maybe not needed
                 Class<?> type = (key.getType() != null) ? key.getType() : rebindContext.loadClass(key.getTypeName());
                 ((EntityInternal)entity).setAttributeWithoutPublishing((AttributeSensor<Object>)key, value);
             } catch (ClassNotFoundException e) {
@@ -94,12 +96,14 @@ public class BasicEntityRebindSupport extends AbstractBrooklynObjectRebindSuppor
         addLocations(rebindContext, memento);
     }
 
+    @SuppressWarnings("unchecked")
     @Override
     protected void addConfig(RebindContext rebindContext, EntityMemento memento) {
         for (Map.Entry<ConfigKey<?>, Object> entry : memento.getConfig().entrySet()) {
             try {
                 ConfigKey<?> key = entry.getKey();
                 Object value = entry.getValue();
+                @SuppressWarnings("unused") // just to ensure we can load the declared type? or maybe not needed
                 Class<?> type = (key.getType() != null) ? key.getType() : rebindContext.loadClass(key.getTypeName());
                 entity.setConfig((ConfigKey<Object>)key, value);
             } catch (ClassNotFoundException e) {
@@ -145,13 +149,38 @@ public class BasicEntityRebindSupport extends AbstractBrooklynObjectRebindSuppor
         }
     }
     
+    @Override
+    public void addFeeds(RebindContext rebindContext, EntityMemento memento) {
+        for (String feedId : memento.getFeeds()) {
+            AbstractFeed feed = (AbstractFeed) rebindContext.getFeed(feedId);
+            if (feed != null) {
+                try {
+                    ((EntityInternal)entity).feeds().addFeed(feed);
+                } catch (Exception e) {
+                    rebindContext.getExceptionHandler().onAddFeedFailed(entity, feed, e);
+                }
+                
+                try {
+                    // TODO don't start feeds here necessarily, if we're in RO mode for instance
+                    // (should refactor enrichers and policies and apply to them)
+                    feed.start();
+                } catch (Exception e) {
+                    rebindContext.getExceptionHandler().onRebindFailed(BrooklynObjectType.ENTITY, entity, e);
+                }
+            } else {
+                LOG.warn("Feed not found; discarding feed {} of entity {}({})",
+                        new Object[] {feedId, memento.getType(), memento.getId()});
+            }
+        }
+    }
+    
     protected void addMembers(RebindContext rebindContext, EntityMemento memento) {
         if (memento.getMembers().size() > 0) {
-            if (entity instanceof Group) {
+            if (entity instanceof AbstractGroupImpl) {
                 for (String memberId : memento.getMembers()) {
                     Entity member = rebindContext.getEntity(memberId);
                     if (member != null) {
-                        ((Group)entity).addMember(member);
+                        ((AbstractGroupImpl)entity).addMemberInternal(member);
                     } else {
                         LOG.warn("Entity not found; discarding member {} of group {}({})",
                                 new Object[] {memberId, memento.getType(), memento.getId()});
@@ -163,11 +192,15 @@ public class BasicEntityRebindSupport extends AbstractBrooklynObjectRebindSuppor
         }
     }
     
+    protected Entity proxy(Entity target) {
+        return target instanceof AbstractEntity ? ((AbstractEntity)target).getProxyIfAvailable() : target;
+    }
+    
     protected void addChildren(RebindContext rebindContext, EntityMemento memento) {
         for (String childId : memento.getChildren()) {
             Entity child = rebindContext.getEntity(childId);
             if (child != null) {
-                entity.addChild(child);
+                entity.addChild(proxy(child));
             } else {
                 LOG.warn("Entity not found; discarding child {} of entity {}({})",
                         new Object[] {childId, memento.getType(), memento.getId()});
@@ -178,7 +211,7 @@ public class BasicEntityRebindSupport extends AbstractBrooklynObjectRebindSuppor
     protected void setParent(RebindContext rebindContext, EntityMemento memento) {
         Entity parent = (memento.getParent() != null) ? rebindContext.getEntity(memento.getParent()) : null;
         if (parent != null) {
-            entity.setParent(parent);
+            entity.setParent(proxy(parent));
         } else if (memento.getParent() != null){
             LOG.warn("Entity not found; discarding parent {} of entity {}({}), so entity will be orphaned and unmanaged",
                     new Object[] {memento.getParent(), memento.getType(), memento.getId()});

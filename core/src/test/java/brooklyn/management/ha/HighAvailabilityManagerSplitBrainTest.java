@@ -19,16 +19,16 @@
 package brooklyn.management.ha;
 
 import static org.testng.Assert.assertEquals;
+import static org.testng.Assert.fail;
 
+import java.util.Collections;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicLong;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.testng.Assert;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
@@ -42,14 +42,16 @@ import brooklyn.entity.rebind.persister.InMemoryObjectStore;
 import brooklyn.entity.rebind.persister.ListeningObjectStore;
 import brooklyn.entity.rebind.persister.PersistMode;
 import brooklyn.entity.rebind.persister.PersistenceObjectStore;
+import brooklyn.internal.BrooklynFeatureEnablement;
 import brooklyn.location.Location;
+import brooklyn.management.ha.TestEntityFailingRebind.RebindException;
 import brooklyn.management.internal.ManagementContextInternal;
+import brooklyn.test.Asserts;
 import brooklyn.test.entity.LocalManagementContextForTests;
 import brooklyn.test.entity.TestApplication;
 import brooklyn.util.collections.MutableList;
 import brooklyn.util.collections.MutableMap;
 import brooklyn.util.exceptions.Exceptions;
-import brooklyn.util.repeat.Repeater;
 import brooklyn.util.time.Duration;
 import brooklyn.util.time.Time;
 
@@ -69,7 +71,8 @@ public class HighAvailabilityManagerSplitBrainTest {
     private ClassLoader classLoader = getClass().getClassLoader();
     
     public class HaMgmtNode {
-        
+        // TODO share with HotStandbyTest and WarmStandbyTest and a few others (minor differences but worth it ultimately)
+
         private ManagementContextInternal mgmt;
         private String ownNodeId;
         private String nodeName;
@@ -79,7 +82,6 @@ public class HighAvailabilityManagerSplitBrainTest {
         private Ticker ticker;
         private AtomicLong currentTime; // used to set the ticker's return value
 
-        @BeforeMethod(alwaysRun=true)
         public void setUp() throws Exception {
             if (sharedTime==null)
                 currentTime = new AtomicLong(System.currentTimeMillis());
@@ -102,7 +104,7 @@ public class HighAvailabilityManagerSplitBrainTest {
             ((ManagementPlaneSyncRecordPersisterToObjectStore)persister).allowRemoteTimestampInMemento();
             BrooklynMementoPersisterToObjectStore persisterObj = new BrooklynMementoPersisterToObjectStore(objectStore, mgmt.getBrooklynProperties(), classLoader);
             mgmt.getRebindManager().setPersister(persisterObj, PersistenceExceptionHandlerImpl.builder().build());
-            ha = new HighAvailabilityManagerImpl(mgmt)
+            ha = ((HighAvailabilityManagerImpl)mgmt.getHighAvailabilityManager())
                 .setPollPeriod(Duration.PRACTICALLY_FOREVER)
                 .setHeartbeatTimeout(Duration.THIRTY_SECONDS)
                 .setLocalTicker(ticker)
@@ -134,23 +136,31 @@ public class HighAvailabilityManagerSplitBrainTest {
         }
     }
     
+    private Boolean prevThrowOnRebind;
+    
     @BeforeMethod(alwaysRun=true)
     public void setUp() throws Exception {
+        prevThrowOnRebind = TestEntityFailingRebind.getThrowOnRebind();
+        TestEntityFailingRebind.setThrowOnRebind(true);
         nodes.clear();
         sharedBackingStore.clear();
     }
     
+    @AfterMethod(alwaysRun=true)
+    public void tearDown() throws Exception {
+        try {
+            for (HaMgmtNode n: nodes)
+                n.tearDown();
+        } finally {
+            if (prevThrowOnRebind != null) TestEntityFailingRebind.setThrowOnRebind(prevThrowOnRebind);
+        }
+    }
+
     public HaMgmtNode newNode() throws Exception {
         HaMgmtNode node = new HaMgmtNode();
         node.setUp();
         nodes.add(node);
         return node;
-    }
-
-    @AfterMethod(alwaysRun=true)
-    public void tearDown() throws Exception {
-        for (HaMgmtNode n: nodes)
-            n.tearDown();
     }
 
     private void sharedTickerAdvance(Duration duration) {
@@ -181,6 +191,90 @@ public class HighAvailabilityManagerSplitBrainTest {
     }
     
     @Test
+    public void testDoubleRebindFails() throws Exception {
+        useSharedTime();
+        HaMgmtNode n1 = newNode();
+        HaMgmtNode n2 = newNode();
+
+        // first auto should become master
+        n1.ha.start(HighAvailabilityMode.AUTO);
+        n2.ha.start(HighAvailabilityMode.AUTO);
+        assertEquals(n1.ha.getNodeState(), ManagementNodeState.MASTER);
+
+        TestApplication app = ApplicationBuilder.newManagedApp(
+                EntitySpec.create(TestApplication.class).impl(TestEntityFailingRebind.class), n1.mgmt);
+        app.start(ImmutableList.<Location>of());
+
+        n1.mgmt.getRebindManager().forcePersistNow();
+
+        //don't publish state for a while (i.e. long store delays, failures)
+        sharedTickerAdvance(Duration.ONE_MINUTE);
+
+        try {
+            n2.ha.publishAndCheck(false);
+            fail("n2 rebind failure expected");
+        } catch (Exception e) {
+            assertNestedRebindException(e);
+        }
+
+        try {
+            n1.ha.publishAndCheck(false);
+            fail("n1 rebind failure expected");
+        } catch (Exception e) {
+            assertNestedRebindException(e);
+        }
+
+        ManagementPlaneSyncRecord memento = n1.ha.getManagementPlaneSyncState();
+        assertEquals(memento.getManagementNodes().get(n1.ownNodeId).getStatus(), ManagementNodeState.FAILED);
+        assertEquals(memento.getManagementNodes().get(n2.ownNodeId).getStatus(), ManagementNodeState.FAILED);
+    }
+
+    @Test
+    public void testStandbyRebind() throws Exception {
+        useSharedTime();
+        HaMgmtNode n1 = newNode();
+        HaMgmtNode n2 = newNode();
+
+        // first auto should become master
+        n1.ha.start(HighAvailabilityMode.AUTO);
+        n2.ha.start(HighAvailabilityMode.AUTO);
+
+        TestApplication app = ApplicationBuilder.newManagedApp(
+                EntitySpec.create(TestApplication.class).impl(TestEntityFailingRebind.class), n1.mgmt);
+        app.start(ImmutableList.<Location>of());
+
+        n1.mgmt.getRebindManager().forcePersistNow();
+
+        //don't publish state for a while (i.e. long store delays, failures)
+        sharedTickerAdvance(Duration.ONE_MINUTE);
+
+        try {
+            n2.ha.publishAndCheck(false);
+            fail("n2 rebind failure expected");
+        } catch (Exception e) {
+            assertNestedRebindException(e);
+        }
+
+        TestEntityFailingRebind.setThrowOnRebind(false);
+        n1.ha.publishAndCheck(false);
+
+        ManagementPlaneSyncRecord memento = n1.ha.getManagementPlaneSyncState();
+        assertEquals(memento.getManagementNodes().get(n1.ownNodeId).getStatus(), ManagementNodeState.MASTER);
+        assertEquals(memento.getManagementNodes().get(n2.ownNodeId).getStatus(), ManagementNodeState.FAILED);
+    }
+    
+    private void assertNestedRebindException(Throwable t) {
+        Throwable ptr = t;
+        while (ptr != null) {
+            if (ptr instanceof RebindException) {
+                return;
+            }
+            ptr = ptr.getCause();
+        }
+        Exceptions.propagate(t);
+    }
+    
+    @Test
     public void testIfNodeStopsBeingAbleToWrite() throws Exception {
         useSharedTime();
         log.info("time at start "+sharedTickerCurrentMillis());
@@ -188,6 +282,7 @@ public class HighAvailabilityManagerSplitBrainTest {
         HaMgmtNode n1 = newNode();
         HaMgmtNode n2 = newNode();
         
+        // first auto should become master
         n1.ha.start(HighAvailabilityMode.AUTO);
         ManagementPlaneSyncRecord memento1 = n1.ha.getManagementPlaneSyncState();
         
@@ -197,13 +292,14 @@ public class HighAvailabilityManagerSplitBrainTest {
         assertEquals(memento1.getManagementNodes().get(n1.ownNodeId).getRemoteTimestamp(), time0);
         assertEquals(memento1.getManagementNodes().get(n1.ownNodeId).getStatus(), ManagementNodeState.MASTER);
 
-        n2.ha.start(HighAvailabilityMode.AUTO);
+        // second - make explicit hot; that's a strictly more complex case than cold standby, so provides pretty good coverage
+        n2.ha.start(HighAvailabilityMode.HOT_STANDBY);
         ManagementPlaneSyncRecord memento2 = n2.ha.getManagementPlaneSyncState();
         
         log.info(n2+" HA: "+memento2);
         assertEquals(memento2.getMasterNodeId(), n1.ownNodeId);
         assertEquals(memento2.getManagementNodes().get(n1.ownNodeId).getStatus(), ManagementNodeState.MASTER);
-        assertEquals(memento2.getManagementNodes().get(n2.ownNodeId).getStatus(), ManagementNodeState.STANDBY);
+        assertEquals(memento2.getManagementNodes().get(n2.ownNodeId).getStatus(), ManagementNodeState.HOT_STANDBY);
         assertEquals(memento2.getManagementNodes().get(n1.ownNodeId).getRemoteTimestamp(), time0);
         assertEquals(memento2.getManagementNodes().get(n2.ownNodeId).getRemoteTimestamp(), time0);
         
@@ -255,8 +351,11 @@ public class HighAvailabilityManagerSplitBrainTest {
         ManagementPlaneSyncRecord memento1b = n1.ha.getManagementPlaneSyncState();
         log.info(n1+" HA now: "+memento1b);
         
+        ManagementNodeState expectedStateAfterDemotion = BrooklynFeatureEnablement.isEnabled(BrooklynFeatureEnablement.FEATURE_DEFAULT_STANDBY_IS_HOT_PROPERTY) ?
+            ManagementNodeState.HOT_STANDBY : ManagementNodeState.STANDBY;
+        
         // n1 comes back and demotes himself 
-        assertEquals(memento1b.getManagementNodes().get(n1.ownNodeId).getStatus(), ManagementNodeState.STANDBY);
+        assertEquals(memento1b.getManagementNodes().get(n1.ownNodeId).getStatus(), expectedStateAfterDemotion);
         assertEquals(memento1b.getManagementNodes().get(n2.ownNodeId).getStatus(), ManagementNodeState.MASTER);
         assertEquals(memento1b.getMasterNodeId(), n2.ownNodeId);
         assertEquals(memento1b.getManagementNodes().get(n1.ownNodeId).getRemoteTimestamp(), time2);
@@ -265,15 +364,15 @@ public class HighAvailabilityManagerSplitBrainTest {
         // n2 now sees itself as master, with n1 in standby again
         ManagementPlaneSyncRecord memento2c = n2.ha.getManagementPlaneSyncState();
         log.info(n2+" HA now: "+memento2c);
-        assertEquals(memento2c.getManagementNodes().get(n1.ownNodeId).getStatus(), ManagementNodeState.STANDBY);
+        assertEquals(memento2c.getManagementNodes().get(n1.ownNodeId).getStatus(), expectedStateAfterDemotion);
         assertEquals(memento2c.getManagementNodes().get(n2.ownNodeId).getStatus(), ManagementNodeState.MASTER);
         assertEquals(memento2c.getMasterNodeId(), n2.ownNodeId);
         assertEquals(memento2c.getManagementNodes().get(n1.ownNodeId).getRemoteTimestamp(), time2);
         assertEquals(memento2c.getManagementNodes().get(n2.ownNodeId).getRemoteTimestamp(), time2);
 
-        // and no entities at n1
-        assertEquals(n1.mgmt.getApplications().size(), 0);
+        // right number of entities at n2; n1 may or may not depending whether hot standby is default
         assertEquals(n2.mgmt.getApplications().size(), 1);
+        assertEquals(n1.mgmt.getApplications().size(), BrooklynFeatureEnablement.isEnabled(BrooklynFeatureEnablement.FEATURE_DEFAULT_STANDBY_IS_HOT_PROPERTY) ? 1 : 0);
     }
     
     @Test(invocationCount=50, groups="Integration")
@@ -313,30 +412,37 @@ public class HighAvailabilityManagerSplitBrainTest {
 
         try {
             final Stopwatch timer = Stopwatch.createStarted();
-            Assert.assertTrue(Repeater.create().backoff(Duration.millis(1), 1.2, Duration.millis(50)).limitTimeTo(Duration.THIRTY_SECONDS).until(new Callable<Boolean>() {
-                @Override public Boolean call() throws Exception {
+            Asserts.succeedsEventually(new Runnable() {
+                @Override public void run() {
                     ManagementPlaneSyncRecord memento = nodes.get(0).ha.getManagementPlaneSyncState();
-                    int masters=0, standbys=0, savedMasters=0, savedStandbys=0;
+                    List<ManagementNodeState> counts = MutableList.of(), savedCounts = MutableList.of();
                     for (HaMgmtNode n: nodes) {
-                        if (n.ha.getNodeState()==ManagementNodeState.MASTER) masters++;
-                        if (n.ha.getNodeState()==ManagementNodeState.STANDBY) standbys++;
+                        counts.add(n.ha.getNodeState());
                         ManagementNodeSyncRecord m = memento.getManagementNodes().get(n.ownNodeId);
                         if (m!=null) {
-                            if (m.getStatus()==ManagementNodeState.MASTER) savedMasters++;
-                            if (m.getStatus()==ManagementNodeState.STANDBY) savedStandbys++;
+                            savedCounts.add(m.getStatus());
                         }
                     }
-                    log.info("while starting "+nodes.size()+" nodes: "+masters+" M + "+standbys+" zzz; "
+                    log.info("while starting "+nodes.size()+" nodes: "
+                        +Collections.frequency(counts, ManagementNodeState.MASTER)+" M + "
+                        +Collections.frequency(counts, ManagementNodeState.HOT_STANDBY)+" hot + "
+                        +Collections.frequency(counts, ManagementNodeState.STANDBY)+" warm + "
+                        +Collections.frequency(counts, ManagementNodeState.INITIALIZING)+" init; "
                         + memento.getManagementNodes().size()+" saved, "
-                        + memento.getMasterNodeId()+" master, "+savedMasters+" M + "+savedStandbys+" zzz");
+                        +Collections.frequency(savedCounts, ManagementNodeState.MASTER)+" M + "
+                        +Collections.frequency(savedCounts, ManagementNodeState.HOT_STANDBY)+" hot + "
+                        +Collections.frequency(savedCounts, ManagementNodeState.STANDBY)+" warm + "
+                        +Collections.frequency(savedCounts, ManagementNodeState.INITIALIZING)+" init");
 
                     if (timer.isRunning() && Duration.of(timer).compareTo(Duration.TEN_SECONDS)>0) {
                         log.warn("we seem to have a problem stabilizing");  //handy place to set a suspend-VM breakpoint!
                         timer.stop();
                     }
-                    return masters==1 && standbys==nodes.size()-1 && savedMasters==1 && savedStandbys==nodes.size()-1;
-                }
-            }).run());
+                    assertEquals(Collections.frequency(counts, ManagementNodeState.MASTER), 1);
+                    assertEquals(Collections.frequency(counts, ManagementNodeState.HOT_STANDBY)+Collections.frequency(counts, ManagementNodeState.STANDBY), nodes.size()-1);
+                    assertEquals(Collections.frequency(savedCounts, ManagementNodeState.MASTER), 1);
+                    assertEquals(Collections.frequency(savedCounts, ManagementNodeState.HOT_STANDBY)+Collections.frequency(savedCounts, ManagementNodeState.STANDBY), nodes.size()-1);
+                }});
         } catch (Throwable t) {
             log.warn("Failed to stabilize (rethrowing): "+t, t);
             throw Exceptions.propagate(t);

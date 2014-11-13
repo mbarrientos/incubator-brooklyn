@@ -21,9 +21,12 @@ package brooklyn.entity.rebind;
 import java.util.Collection;
 
 import brooklyn.mementos.BrooklynMementoPersister.Delta;
+import brooklyn.mementos.CatalogItemMemento;
 import brooklyn.mementos.EnricherMemento;
 import brooklyn.mementos.EntityMemento;
+import brooklyn.mementos.FeedMemento;
 import brooklyn.mementos.LocationMemento;
+import brooklyn.mementos.Memento;
 import brooklyn.mementos.PolicyMemento;
 
 import com.google.common.collect.Sets;
@@ -53,6 +56,14 @@ public class PersisterDeltaImpl implements Delta {
             delta.enrichers.addAll(vals);
             return this;
         }
+        public Builder feeds(Collection<? extends FeedMemento> vals) {
+            delta.feeds.addAll(vals);
+            return this;
+        }
+        public Builder catalogItems(Collection<? extends CatalogItemMemento> vals) {
+            delta.catalogItems.addAll(vals);
+            return this;
+        }
         public Builder removedLocationIds(Collection<String> vals) {
             delta.removedLocationIds.addAll(vals);
             return this;
@@ -69,6 +80,14 @@ public class PersisterDeltaImpl implements Delta {
             delta.removedEnricherIds.addAll(vals);
             return this;
         }
+        public Builder removedFeedIds(Collection<String> vals) {
+            delta.removedFeedIds.addAll(vals);
+            return this;
+        }
+        public Builder removedCatalogItemIds(Collection<String> vals) {
+            delta.removedCatalogItemIds.addAll(vals);
+            return this;
+        }
         public Delta build() {
             return delta;
         }
@@ -78,11 +97,15 @@ public class PersisterDeltaImpl implements Delta {
     Collection<EntityMemento> entities = Sets.newLinkedHashSet();
     Collection<PolicyMemento> policies = Sets.newLinkedHashSet();
     Collection<EnricherMemento> enrichers = Sets.newLinkedHashSet();
-    Collection <String> removedLocationIds = Sets.newLinkedHashSet();
-    Collection <String> removedEntityIds = Sets.newLinkedHashSet();
-    Collection <String> removedPolicyIds = Sets.newLinkedHashSet();
-    Collection <String> removedEnricherIds = Sets.newLinkedHashSet();
-    
+    Collection<FeedMemento> feeds = Sets.newLinkedHashSet();
+    Collection<CatalogItemMemento> catalogItems = Sets.newLinkedHashSet();
+    Collection<String> removedLocationIds = Sets.newLinkedHashSet();
+    Collection<String> removedEntityIds = Sets.newLinkedHashSet();
+    Collection<String> removedPolicyIds = Sets.newLinkedHashSet();
+    Collection<String> removedEnricherIds = Sets.newLinkedHashSet();
+    Collection <String> removedFeedIds = Sets.newLinkedHashSet();
+    Collection<String> removedCatalogItemIds = Sets.newLinkedHashSet();
+
     @Override
     public Collection<LocationMemento> locations() {
         return locations;
@@ -101,6 +124,16 @@ public class PersisterDeltaImpl implements Delta {
     @Override
     public Collection<EnricherMemento> enrichers() {
         return enrichers;
+    }
+    
+    @Override
+    public Collection<FeedMemento> feeds() {
+        return feeds;
+    }
+
+    @Override
+    public Collection<CatalogItemMemento> catalogItems() {
+        return catalogItems;
     }
 
     @Override
@@ -121,5 +154,45 @@ public class PersisterDeltaImpl implements Delta {
     @Override
     public Collection<String> removedEnricherIds() {
         return removedEnricherIds;
+    }
+    
+    @Override
+    public Collection<String> removedFeedIds() {
+        return removedFeedIds;
+    }
+
+    @Override
+    public Collection<String> removedCatalogItemIds() {
+        return removedCatalogItemIds;
+    }
+    
+    @Override
+    public Collection<? extends Memento> getObjectsOfType(BrooklynObjectType type) {
+        switch (type) {
+        case ENTITY: return entities();
+        case LOCATION: return locations();
+        case POLICY: return policies();
+        case ENRICHER: return enrichers();
+        case FEED: return feeds();
+        case CATALOG_ITEM: return catalogItems();
+        case UNKNOWN: 
+        default:
+            throw new IllegalArgumentException(type+" not supported");
+        }
+    }
+    
+    @Override
+    public Collection<String> getRemovedObjectsOfType(BrooklynObjectType type) {
+        switch (type) {
+        case ENTITY: return removedEntityIds();
+        case LOCATION: return removedLocationIds();
+        case POLICY: return removedPolicyIds();
+        case ENRICHER: return removedEnricherIds();
+        case FEED: return removedFeedIds();
+        case CATALOG_ITEM: return removedCatalogItemIds();
+        case UNKNOWN: 
+        default:
+            throw new IllegalArgumentException(type+" not supported");
+        }
     }
 }

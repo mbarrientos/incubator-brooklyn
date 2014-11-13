@@ -128,6 +128,7 @@ import brooklyn.util.ssh.IptablesCommands;
 import brooklyn.util.ssh.IptablesCommands.Chain;
 import brooklyn.util.ssh.IptablesCommands.Policy;
 import brooklyn.util.stream.Streams;
+import brooklyn.util.text.ByteSizeStrings;
 import brooklyn.util.text.Identifiers;
 import brooklyn.util.text.KeyValueParser;
 import brooklyn.util.text.Strings;
@@ -544,6 +545,7 @@ public class JcloudsLocation extends AbstractCloudMachineProvisioningLocation im
         setCreationString(setup);
         boolean waitForSshable = !"false".equalsIgnoreCase(setup.get(WAIT_FOR_SSHABLE));
         boolean usePortForwarding = setup.get(USE_PORT_FORWARDING);
+        boolean skipJcloudsSshing = Boolean.FALSE.equals(setup.get(USE_JCLOUDS_SSH_INIT)) || usePortForwarding;
         JcloudsPortForwarderExtension portForwarder = setup.get(PORT_FORWARDER);
         if (usePortForwarding) checkNotNull(portForwarder, "portForwarder, when use-port-forwarding enabled");
 
@@ -576,7 +578,7 @@ public class JcloudsLocation extends AbstractCloudMachineProvisioningLocation im
             try {
                 // Setup the template
                 template = buildTemplate(computeService, setup);
-                if (waitForSshable && !usePortForwarding) {
+                if (waitForSshable && !skipJcloudsSshing) {
                     initialCredentials = initTemplateForCreateUser(template, setup);
                 }
 
@@ -615,14 +617,14 @@ public class JcloudsLocation extends AbstractCloudMachineProvisioningLocation im
                         Optional.<Integer>absent(), 
                         Protocol.TCP, 
                         Cidr.UNIVERSAL));
-                
-                if (waitForSshable) {
-                    // once that host:port is definitely reachable, we can create the user
-                    waitForReachable(computeService, node, sshHostAndPortOverride, node.getCredentials(), setup);
-                    initialCredentials = createUser(computeService, node, sshHostAndPortOverride, setup);
-                }
             } else {
                 sshHostAndPortOverride = Optional.absent();
+            }
+                
+            if (waitForSshable && skipJcloudsSshing) {
+                // once that host:port is definitely reachable, we can create the user
+                waitForReachable(computeService, node, sshHostAndPortOverride, node.getCredentials(), setup);
+                initialCredentials = createUser(computeService, node, sshHostAndPortOverride, setup);
             }
             
             // Figure out which login-credentials to use
@@ -632,8 +634,8 @@ public class JcloudsLocation extends AbstractCloudMachineProvisioningLocation im
                 //set userName and other data, from these credentials
                 Object oldUsername = setup.put(USER, customCredentials.getUser());
                 LOG.debug("node {} username {} / {} (customCredentials)", new Object[] { node, customCredentials.getUser(), oldUsername });
-                if (groovyTruth(customCredentials.getPassword())) setup.put(PASSWORD, customCredentials.getPassword());
-                if (groovyTruth(customCredentials.getPrivateKey())) setup.put(PRIVATE_KEY_DATA, customCredentials.getPrivateKey());
+                if (customCredentials.getOptionalPassword().isPresent()) setup.put(PASSWORD, customCredentials.getOptionalPassword().get());
+                if (customCredentials.getOptionalPrivateKey().isPresent()) setup.put(PRIVATE_KEY_DATA, customCredentials.getOptionalPrivateKey().get());
             }
             if (initialCredentials == null) {
                 initialCredentials = extractVmCredentials(setup, node);
@@ -789,7 +791,7 @@ public class JcloudsLocation extends AbstractCloudMachineProvisioningLocation im
                     }})
             .put(MIN_RAM, new CustomizeTemplateBuilder() {
                     public void apply(TemplateBuilder tb, ConfigBag props, Object v) {
-                        tb.minRam(TypeCoercions.coerce(v, Integer.class));
+                        tb.minRam( (int)(ByteSizeStrings.parse(Strings.toString(v), "mb")/1000/1000) );
                     }})
             .put(MIN_CORES, new CustomizeTemplateBuilder() {
                     public void apply(TemplateBuilder tb, ConfigBag props, Object v) {
@@ -797,7 +799,7 @@ public class JcloudsLocation extends AbstractCloudMachineProvisioningLocation im
                     }})
             .put(MIN_DISK, new CustomizeTemplateBuilder() {
                     public void apply(TemplateBuilder tb, ConfigBag props, Object v) {
-                        tb.minDisk(TypeCoercions.coerce(v, Double.class));
+                        tb.minDisk( (int)(ByteSizeStrings.parse(Strings.toString(v), "gb")/1000/1000/1000) );
                     }})
             .put(HARDWARE_ID, new CustomizeTemplateBuilder() {
                     public void apply(TemplateBuilder tb, ConfigBag props, Object v) {
@@ -1135,7 +1137,8 @@ public class JcloudsLocation extends AbstractCloudMachineProvisioningLocation im
      * Create the user immediately - executing ssh commands as required.
      */
     protected LoginCredentials createUser(ComputeService computeService, NodeMetadata node, Optional<HostAndPort> hostAndPortOverride, ConfigBag config) {
-        UserCreation userCreation = createUserStatements(computeService.getImage(node.getImageId()), config);
+        Image image = (node.getImageId() != null) ? computeService.getImage(node.getImageId()) : null;
+        UserCreation userCreation = createUserStatements(image, config);
         
         if (!userCreation.statements.isEmpty()) {
             org.jclouds.compute.domain.OsFamily osFamily = node.getOperatingSystem().getFamily();
@@ -1164,9 +1167,18 @@ public class JcloudsLocation extends AbstractCloudMachineProvisioningLocation im
             if (initialPassword.isPresent()) sshProps.put("password", initialPassword.get());
             if (initialPrivateKey.isPresent()) sshProps.put("privateKeyData", initialPrivateKey.get());
             
+            // TODO Retrying lots of times as workaround for vcloud-director. There the guest customizations
+            // can cause the VM to reboot shortly after it was ssh'able.
             Map<String,Object> execProps = Maps.newLinkedHashMap();
             execProps.put(ShellTool.PROP_RUN_AS_ROOT.getName(), true);
-            
+            execProps.put(SshTool.PROP_SSH_TRIES.getName(), 50);
+            execProps.put(SshTool.PROP_SSH_TRIES_TIMEOUT.getName(), 10*60*1000);
+
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("VM {}: executing user creation/setup via {}@{}:{}; commands: {}", new Object[] {
+                        config.getDescription(), initialUser, address, port, commands});
+            }
+
             SshMachineLocation sshLoc = null;
             try {
                 if (isManaged()) {
@@ -1260,7 +1272,7 @@ public class JcloudsLocation extends AbstractCloudMachineProvisioningLocation im
      * @param config Configuration for creating the VM
      * @return       The commands required to create the user, along with the expected login credentials.
      */
-    protected UserCreation createUserStatements(Image image, ConfigBag config) {
+    protected UserCreation createUserStatements(@Nullable Image image, ConfigBag config) {
         //NB: we ignore private key here because, by default we probably should not be installing it remotely;
         //also, it may not be valid for first login (it is created before login e.g. on amazon, so valid there;
         //but not elsewhere, e.g. on rackspace).
@@ -1268,7 +1280,7 @@ public class JcloudsLocation extends AbstractCloudMachineProvisioningLocation im
         LoginCredentials loginCreds = null;
         String user = getUser(config);
         String explicitLoginUser = config.get(LOGIN_USER);
-        String loginUser = groovyTruth(explicitLoginUser) ? explicitLoginUser : (image.getDefaultCredentials() != null) ? image.getDefaultCredentials().identity : null;
+        String loginUser = groovyTruth(explicitLoginUser) ? explicitLoginUser : (image != null && image.getDefaultCredentials() != null) ? image.getDefaultCredentials().identity : null;
         Boolean dontCreateUser = config.get(DONT_CREATE_USER);
         Boolean grantUserSudo = config.get(GRANT_USER_SUDO);
         String publicKeyData = LocationConfigUtils.getPublicKeyData(config);
@@ -1530,8 +1542,8 @@ public class JcloudsLocation extends AbstractCloudMachineProvisioningLocation im
         if (isManaged()) {
             return getManagementContext().getLocationManager().createLocation(LocationSpec.create(JcloudsSshMachineLocation.class)
                     .configure("displayName", vmHostname)
-                    .configure("address", address) 
-                    .configure("port", sshHostAndPort.isPresent() ? sshHostAndPort.get().getPort() : node.getLoginPort()) 
+                    .configure("address", address)
+                    .configure("port", sshHostAndPort.isPresent() ? sshHostAndPort.get().getPort() : node.getLoginPort())
                     .configure("user", getUser(setup))
                     // don't think "config" does anything
                     .configure(sshConfig)
@@ -1643,7 +1655,8 @@ public class JcloudsLocation extends AbstractCloudMachineProvisioningLocation im
             computeService.destroyNode(instanceId);
         } finally {
         /*
-         //don't close, so can re-use...
+            // we don't close the compute service; this means if we provision add'l it is fast;
+            // however it also means an explicit System.exit may be needed for termination
             if (computeService != null) {
                 try {
                     computeService.getContext().close();

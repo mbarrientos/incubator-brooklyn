@@ -22,6 +22,7 @@ import java.lang.reflect.Modifier;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.util.Arrays;
+import java.util.Map;
 import java.util.Set;
 
 import javax.annotation.Nullable;
@@ -38,7 +39,9 @@ import brooklyn.entity.basic.ApplicationBuilder;
 import brooklyn.entity.proxying.ImplementedBy;
 import brooklyn.management.internal.ManagementContextInternal;
 import brooklyn.policy.Policy;
+import brooklyn.util.collections.MutableMap;
 import brooklyn.util.exceptions.Exceptions;
+import brooklyn.util.flags.FlagUtils;
 import brooklyn.util.javalang.AggregateClassLoader;
 import brooklyn.util.javalang.ReflectionScanner;
 import brooklyn.util.javalang.UrlClassLoader;
@@ -58,7 +61,7 @@ public class CatalogClasspathDo {
          * for any catalog which is presented over the internet this is recommended (to prevent loading) and is the default; 
          * (you should explicitly list the items to include; it may be useful to autogenerate it by using a local catalog
          * scanning with ANNOTATIONS, viwing that by running mgmt.getCatalog().toXmlString(),
-         * then editting the resulting XML (e.g. setting the classpath and removing the scan attribute) */
+         * then editing the resulting XML (e.g. setting the classpath and removing the scan attribute) */
         NONE, 
         
         /** types in the classpath are scanned for annotations indicating inclusion in the catalog ({@link Catalog});
@@ -241,6 +244,8 @@ public class CatalogClasspathDo {
     @Deprecated
     public CatalogItem<?,?> addCatalogEntry(CatalogItemDtoAbstract<?,?> item, Class<?> c) {
         Catalog annotations = c.getAnnotation(Catalog.class);
+        Map<String, Object> flags = MutableMap.<String, Object>of("id", c.getName());
+        FlagUtils.setFieldsFromFlags(flags, item);
         item.registeredType = c.getName();
         item.javaType = c.getName();
         item.name = firstNonEmpty(c.getSimpleName(), c.getName());

@@ -18,7 +18,10 @@
  */
 package brooklyn.entity.rebind;
 
+import brooklyn.basic.BrooklynObject;
+import brooklyn.catalog.CatalogItem;
 import brooklyn.entity.Entity;
+import brooklyn.entity.Feed;
 import brooklyn.location.Location;
 import brooklyn.policy.Enricher;
 import brooklyn.policy.Policy;
@@ -42,7 +45,14 @@ public interface RebindContext {
 
     Enricher getEnricher(String id);
 
+    Feed getFeed(String id);
+    
+    CatalogItem<?, ?> getCatalogItem(String id);
+
     Class<?> loadClass(String typeName) throws ClassNotFoundException;
     
     RebindExceptionHandler getExceptionHandler();
+    
+    boolean isReadOnly(BrooklynObject item);
+    
 }

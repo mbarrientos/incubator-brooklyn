@@ -25,6 +25,7 @@ import java.util.Collection;
 
 import brooklyn.management.ha.ManagementPlaneSyncRecordPersister.Delta;
 
+import com.google.api.client.repackaged.com.google.common.base.Objects;
 import com.google.common.annotations.Beta;
 import com.google.common.collect.Sets;
 
@@ -45,6 +46,7 @@ public class ManagementPlaneSyncRecordDeltaImpl implements Delta {
         private Collection <String> removedNodeIds = Sets.newLinkedHashSet();
         private MasterChange masterChange = MasterChange.NO_CHANGE;
         private String master;
+        private String expectedOldMaster;
         
         public Builder node(ManagementNodeSyncRecord node) {
             nodes.add(checkNotNull(node, "node")); return this;
@@ -57,8 +59,9 @@ public class ManagementPlaneSyncRecordDeltaImpl implements Delta {
             master = checkNotNull(nodeId, "masterId");
             return this;
         }
-        public Builder clearMaster(String nodeId) {
+        public Builder clearMaster(String optionalExpectedNodeId) {
             masterChange = MasterChange.CLEAR_MASTER;
+            this.expectedOldMaster = optionalExpectedNodeId;
             return this;
         }
         public Delta build() {
@@ -70,12 +73,14 @@ public class ManagementPlaneSyncRecordDeltaImpl implements Delta {
     private final Collection <String> removedNodeIds;
     private final MasterChange masterChange;
     private String masterId;
+    private String expectedOldMaster;
     
     ManagementPlaneSyncRecordDeltaImpl(Builder builder) {
         nodes = builder.nodes;
         removedNodeIds = builder.removedNodeIds;
         masterChange = builder.masterChange;
         masterId = builder.master;
+        this.expectedOldMaster = builder.expectedOldMaster;
         checkState((masterChange == MasterChange.SET_MASTER) ? (masterId != null) : (masterId == null), 
                 "invalid combination: change=%s; masterId=%s", masterChange, masterId);
     }
@@ -98,5 +103,20 @@ public class ManagementPlaneSyncRecordDeltaImpl implements Delta {
     @Override
     public String getNewMasterOrNull() {
         return masterId;
+    }
+    
+    @Override
+    public String getExpectedMasterToClear() {
+        return expectedOldMaster;
+    }
+    
+    @Override
+    public String toString() {
+        return getClass().getCanonicalName()+"["+
+            (masterChange!=null && masterChange != MasterChange.NO_CHANGE ? 
+                masterChange+": "+expectedOldMaster+"->"+masterId+"; " : "")+
+            "nodes: "+nodes+
+            (removedNodeIds!=null && !removedNodeIds.isEmpty() ? "; removing: "+removedNodeIds : "")
+            +"]";
     }
 }

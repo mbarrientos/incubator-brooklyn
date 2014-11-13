@@ -68,6 +68,7 @@ public class BasicEntityMemento extends AbstractTreeNodeMemento implements Entit
         protected List<String> locations = Lists.newArrayList();
         protected List<String> policies = Lists.newArrayList();
         protected List<String> enrichers = Lists.newArrayList();
+        protected List<String> feeds = Lists.newArrayList();
         protected List<String> members = Lists.newArrayList();
         protected List<Effector<?>> effectors = Lists.newArrayList();
         
@@ -81,6 +82,7 @@ public class BasicEntityMemento extends AbstractTreeNodeMemento implements Entit
             locations.addAll(other.getLocations());
             policies.addAll(other.getPolicies());
             enrichers.addAll(other.getEnrichers());
+            feeds.addAll(other.getFeeds());
             members.addAll(other.getMembers());
             effectors.addAll(other.getEffectors());
             tags.addAll(other.getTags());
@@ -103,6 +105,7 @@ public class BasicEntityMemento extends AbstractTreeNodeMemento implements Entit
     private Map<String, Object> attributes;
     private List<String> policies;
     private List<String> enrichers;
+    private List<String> feeds;
     
     // TODO can we move some of these to entity type, or remove/re-insert those which are final statics?
     private Map<String, ConfigKey<?>> configKeys;
@@ -115,10 +118,8 @@ public class BasicEntityMemento extends AbstractTreeNodeMemento implements Entit
     private transient Map<String, Object> configUnmatched;
     private transient Map<AttributeSensor<?>, Object> attributesByKey;
 
-    // for de-serialization
-    @SuppressWarnings("unused")
-    private BasicEntityMemento() {
-    }
+    @SuppressWarnings("unused") // For deserialisation
+    private BasicEntityMemento() {}
 
     // Trusts the builder to not mess around with mutability after calling build() -- with invalidate pattern
     // Does not make any attempt to make unmodifiable, or immutable copy, to have cleaner (and faster) output
@@ -130,6 +131,7 @@ public class BasicEntityMemento extends AbstractTreeNodeMemento implements Entit
         locations = toPersistedList(builder.locations);
         policies = toPersistedList(builder.policies);
         enrichers = toPersistedList(builder.enrichers);
+        feeds = toPersistedList(builder.feeds);
         members = toPersistedList(builder.members);
         
         effectors = toPersistedList(builder.effectors);
@@ -280,6 +282,11 @@ public class BasicEntityMemento extends AbstractTreeNodeMemento implements Entit
         return fromPersistedList(locations);
     }
 
+    @Override
+    public List<String> getFeeds() {
+        return fromPersistedList(feeds);
+    }
+    
     @Override
     protected ToStringHelper newVerboseStringHelper() {
         return super.newVerboseStringHelper()

@@ -22,9 +22,9 @@ import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
 import brooklyn.catalog.CatalogItem;
+import brooklyn.entity.rebind.RebindSupport;
 import brooklyn.management.ManagementContext;
-import brooklyn.management.classloading.BrooklynClassLoadingContext;
-import brooklyn.management.classloading.BrooklynClassLoadingContextSequential;
+import brooklyn.mementos.CatalogItemMemento;
 
 import com.google.common.base.Preconditions;
 
@@ -60,6 +60,11 @@ public class CatalogItemDo<T,SpecT> implements CatalogItem<T,SpecT> {
     }
 
     @Override
+    public String getCatalogItemId() {
+        return null;
+    }
+
+    @Override
     public String getRegisteredTypeName() {
         return itemDto.getRegisteredTypeName();
     }
@@ -69,9 +74,26 @@ public class CatalogItemDo<T,SpecT> implements CatalogItem<T,SpecT> {
         return itemDto.getJavaType();
     }
 
+    @Deprecated
     @Override
     public String getName() {
-        return itemDto.getName();
+        return getDisplayName();
+    }
+
+    @Override
+    public String getDisplayName() {
+        return itemDto.getDisplayName();
+    }
+
+    @Override
+    public TagSupport tags() {
+        return itemDto.tags();
+    }
+
+    @Override
+    @Deprecated
+    public TagSupport getTagSupport() {
+        return tags();
     }
 
     @Override
@@ -96,25 +118,17 @@ public class CatalogItemDo<T,SpecT> implements CatalogItem<T,SpecT> {
     }
 
     /** @deprecated since 0.7.0 this is the legacy mechanism; still needed for policies and apps, but being phased out.
-     * new items should use {@link #getYaml()} and {@link #newClassLoadingContext(ManagementContext, BrooklynClassLoadingContext)} */
+     * new items should use {@link #getPlanYaml} and {@link #newClassLoadingContext} */
     @Deprecated
     public Class<T> getJavaClass() {
         if (javaClass==null) loadJavaClass(null);
         return javaClass;
     }
     
-    @SuppressWarnings("deprecation")
-    public BrooklynClassLoadingContext newClassLoadingContext(final ManagementContext mgmt) {
-        BrooklynClassLoadingContextSequential result = new BrooklynClassLoadingContextSequential(mgmt);
-        result.add(itemDto.newClassLoadingContext(mgmt));
-        result.addSecondary(catalog.newClassLoadingContext());
-        return result;
-    }
-    
     @SuppressWarnings("unchecked")
     Class<? extends T> loadJavaClass(final ManagementContext mgmt) {
         if (javaClass!=null) return javaClass;
-        javaClass = (Class<T>)newClassLoadingContext(mgmt).loadClass(getJavaType());
+        javaClass = (Class<T>)CatalogUtils.newClassLoadingContext(mgmt, getId(), getLibraries(), catalog.getRootClassLoader()).loadClass(getJavaType());
         return javaClass;
     }
 
@@ -123,10 +137,12 @@ public class CatalogItemDo<T,SpecT> implements CatalogItem<T,SpecT> {
         return getClass().getCanonicalName()+"["+itemDto+"]";
     }
 
+    @Override
     public String toXmlString() {
         return itemDto.toXmlString();
     }
 
+    @Override
     public Class<SpecT> getSpecType() {
         return itemDto.getSpecType();
     }
@@ -135,5 +151,9 @@ public class CatalogItemDo<T,SpecT> implements CatalogItem<T,SpecT> {
     public String getPlanYaml() {
         return itemDto.getPlanYaml();
     }
-    
+
+    @Override
+    public RebindSupport<CatalogItemMemento> getRebindSupport() {
+        return itemDto.getRebindSupport();
+    }
 }

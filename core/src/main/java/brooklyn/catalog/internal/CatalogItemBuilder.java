@@ -28,8 +28,9 @@ public class CatalogItemBuilder<CatalogItemType extends CatalogItemDtoAbstract<?
                 .registeredTypeName(registeredTypeName);
     }
 
-    public static CatalogItemBuilder<CatalogTemplateItemDto> newTemplate() {
-        return new CatalogItemBuilder<CatalogTemplateItemDto>(new CatalogTemplateItemDto());
+    public static CatalogItemBuilder<CatalogTemplateItemDto> newTemplate(String registeredTypeName) {
+        return new CatalogItemBuilder<CatalogTemplateItemDto>(new CatalogTemplateItemDto())
+                .registeredTypeName(registeredTypeName);
     }
 
     public static CatalogItemBuilder<CatalogPolicyItemDto> newPolicy(String registeredTypeName) {
@@ -47,8 +48,14 @@ public class CatalogItemBuilder<CatalogItemType extends CatalogItemDtoAbstract<?
         return this;
     }
 
+    /** @deprecated since 0.7.0 use {@link #displayName}*/
+    @Deprecated
     public CatalogItemBuilder<CatalogItemType> name(String name) {
-        dto.name = name;
+        return displayName(name);
+    }
+
+    public CatalogItemBuilder<CatalogItemType> displayName(String displayName) {
+        dto.name = displayName;
         return this;
     }
 

@@ -61,10 +61,10 @@ public class CatalogResourceTest extends BrooklynRestResourceTest {
         super.setUp();
     }
     
-  @Override
-  protected void setUpResources() throws Exception {
-    addResource(new CatalogResource());
-  }
+    @Override
+    protected void addBrooklynResources() {
+        addResource(new CatalogResource());
+    }
 
   @Test
   /** based on CampYamlLiteTest */
@@ -175,22 +175,22 @@ public class CatalogResourceTest extends BrooklynRestResourceTest {
     assertEquals(entities4.size(), 0);
   }
 
-  private static final String REDIS_STORE_ICON_URL = "/v1/catalog/icon/brooklyn.entity.nosql.redis.RedisStore";
-  
   @Test
   public void testGetCatalogEntityDetails() {
       CatalogEntitySummary details = client().resource(
               URI.create("/v1/catalog/entities/brooklyn.entity.nosql.redis.RedisStore"))
               .get(CatalogEntitySummary.class);
       assertTrue(details.toString().contains("redis.port"), "expected more config, only got: "+details);
-      assertTrue(details.getIconUrl().contains(REDIS_STORE_ICON_URL), "expected brooklyn URL for icon image, but got: "+details.getIconUrl());
+      String iconUrl = "/v1/catalog/icon/" + details.getId();
+      assertTrue(details.getIconUrl().contains(iconUrl), "expected brooklyn URL for icon image, but got: "+details.getIconUrl());
   }
 
   @Test
   public void testGetCatalogEntityIconDetails() throws IOException {
-      ClientResponse response = client().resource(
-              URI.create(REDIS_STORE_ICON_URL)).get(ClientResponse.class);
+      ClientResponse response = client().resource(URI.create("/v1/catalog/icon/brooklyn.entity.nosql.redis.RedisStore"))
+              .get(ClientResponse.class);
       response.bufferEntity();
+      Assert.assertEquals(response.getStatus(), 200);
       Assert.assertEquals(response.getType(), MediaType.valueOf("image/png"));
       Image image = Toolkit.getDefaultToolkit().createImage(Files.readFile(response.getEntityInputStream()));
       Assert.assertNotNull(image);

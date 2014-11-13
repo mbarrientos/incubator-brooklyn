@@ -19,6 +19,9 @@
 package brooklyn.launcher;
 
 import static org.testng.Assert.assertEquals;
+import static org.testng.Assert.assertFalse;
+import static org.testng.Assert.assertNotEquals;
+import static org.testng.Assert.assertTrue;
 
 import java.io.File;
 
@@ -26,18 +29,19 @@ import org.testng.annotations.Test;
 
 import brooklyn.config.BrooklynProperties;
 import brooklyn.config.BrooklynServerConfig;
-import brooklyn.config.StringConfigMap;
 import brooklyn.entity.proxying.EntitySpec;
 import brooklyn.entity.rebind.persister.BrooklynMementoPersisterToObjectStore;
 import brooklyn.entity.rebind.persister.FileBasedObjectStore;
 import brooklyn.entity.rebind.persister.PersistMode;
 import brooklyn.management.ManagementContext;
-import brooklyn.mementos.BrooklynMemento;
+import brooklyn.management.ha.HighAvailabilityMode;
+import brooklyn.mementos.BrooklynMementoRawData;
 import brooklyn.test.entity.TestApplication;
 import brooklyn.util.javalang.JavaClassNames;
 import brooklyn.util.os.Os;
 import brooklyn.util.text.Identifiers;
 
+import com.google.common.base.Joiner;
 import com.google.common.io.Files;
 
 public class BrooklynLauncherRebindTestToFiles extends BrooklynLauncherRebindTestFixture {
@@ -115,20 +119,33 @@ public class BrooklynLauncherRebindTestToFiles extends BrooklynLauncherRebindTes
     public void testCopyPersistedState() throws Exception {
         EntitySpec<TestApplication> appSpec = EntitySpec.create(TestApplication.class);
         populatePersistenceDir(persistenceDir, appSpec);
-        
+
         File destinationDir = Files.createTempDir();
+        String destination = destinationDir.getAbsolutePath();
+        String destinationLocation = null; // i.e. file system, rather than object store
         try {
             // Auto will rebind if the dir exists
-            BrooklynLauncher launcher = newLauncherDefault(PersistMode.AUTO);
-            BrooklynMemento memento = launcher.retrieveState();
-            launcher.persistState(memento, destinationDir);
+            BrooklynLauncher launcher = newLauncherDefault(PersistMode.AUTO)
+                    .highAvailabilityMode(HighAvailabilityMode.MASTER)
+                    .webconsole(false);
+            launcher.copyPersistedState(destination, destinationLocation);
             launcher.terminate();
             
-            assertEquals(memento.getApplicationIds().size(), 1, "apps="+memento.getApplicationIds());
-            
-            // Should now have a usable copy in the destionationDir
+            File entities = new File(Os.mergePaths(destination), "entities");
+            assertTrue(entities.isDirectory(), "entities directory should exist");
+            assertEquals(entities.listFiles().length, 1, "entities directory should contain one file (contained: "+
+                    Joiner.on(", ").join(entities.listFiles()) +")");
+
+            File nodes = new File(Os.mergePaths(destination, "nodes"));
+            assertTrue(nodes.isDirectory(), "nodes directory should exist");
+            assertNotEquals(nodes.listFiles().length, 0, "nodes directory should not be empty");
+
+            // Should now have a usable copy in the destinationDir
             // Auto will rebind if the dir exists
-            newLauncherDefault(PersistMode.AUTO).start();
+            newLauncherDefault(PersistMode.AUTO)
+                    .webconsole(false)
+                    .persistenceDir(destinationDir)
+                    .start();
             assertOnlyApp(lastMgmt(), TestApplication.class);
             
         } finally {

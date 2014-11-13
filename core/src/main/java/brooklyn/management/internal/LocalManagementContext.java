@@ -133,7 +133,7 @@ public class LocalManagementContext extends AbstractManagementContext {
      * Creates a LocalManagement with default BrooklynProperties.
      */
     public LocalManagementContext() {
-        this(new Builder());
+        this(BrooklynProperties.Factory.builderDefault());
     }
 
     public LocalManagementContext(BrooklynProperties brooklynProperties) {
@@ -309,7 +309,7 @@ public class LocalManagementContext extends AbstractManagementContext {
         }
         return execution;
     }
-
+    
     @Override
     public void terminate() {
         INSTANCES.remove(this);
@@ -330,7 +330,7 @@ public class LocalManagementContext extends AbstractManagementContext {
     @SuppressWarnings({ "unchecked", "rawtypes" })
     @Override
     public <T> Task<T> runAtEntity(Map flags, Entity entity, Callable<T> c) {
-		manageIfNecessary(entity, elvis(Arrays.asList(flags.get("displayName"), flags.get("description"), flags, c)));
+        manageIfNecessary(entity, elvis(Arrays.asList(flags.get("displayName"), flags.get("description"), flags, c)));
         return runAtEntity(entity, Tasks.<T>builder().dynamic(true).body(c).flags(flags).build());
     }
 
@@ -382,13 +382,18 @@ public class LocalManagementContext extends AbstractManagementContext {
         }
         this.downloadsManager = BasicDownloadsManager.newDefault(configMap);
 
-        // Force reload of location registry
-        this.locationRegistry = null;
+        clearLocationRegistry();
         
         // Notify listeners that properties have been reloaded
         for (PropertiesReloadListener listener : reloadListeners) {
             listener.reloaded();
         }
+    }
+
+    @VisibleForTesting
+    public void clearLocationRegistry() {
+        // Force reload of location registry
+        this.locationRegistry = null;
     }
 
     @Override

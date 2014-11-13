@@ -48,12 +48,14 @@ public abstract class AbstractBrooklynObjectRebindSupport<T extends Memento> imp
         if (LOG.isTraceEnabled()) LOG.trace("Reconstructing: {}", memento.toVerboseString());
 
         instance.setDisplayName(memento.getDisplayName());
+        instance.setCatalogItemId(memento.getCatalogItemId());
         addConfig(rebindContext, memento);
         addTags(rebindContext, memento);
         addCustoms(rebindContext, memento);
         
         doReconstruct(rebindContext, memento);
-        instance.rebind();
+        if (!rebindContext.isReadOnly(instance))
+            instance.rebind();
     }
 
     protected abstract void addConfig(RebindContext rebindContext, T memento);
@@ -62,7 +64,7 @@ public abstract class AbstractBrooklynObjectRebindSupport<T extends Memento> imp
     
     protected void addTags(RebindContext rebindContext, T memento) {
         for (Object tag : memento.getTags()) {
-            instance.getTagSupport().addTag(tag);
+            instance.tags().addTag(tag);
         }
     }
 
@@ -73,6 +75,11 @@ public abstract class AbstractBrooklynObjectRebindSupport<T extends Memento> imp
 
     @Override
     public void addEnrichers(RebindContext rebindContext, T Memento) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void addFeeds(RebindContext rebindContext, T Memento) {
         throw new UnsupportedOperationException();
     }
 

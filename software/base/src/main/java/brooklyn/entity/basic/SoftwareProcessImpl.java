@@ -34,8 +34,10 @@ import org.slf4j.LoggerFactory;
 import brooklyn.config.ConfigKey;
 import brooklyn.enricher.Enrichers;
 import brooklyn.entity.Entity;
+import brooklyn.entity.basic.ServiceStateLogic.ServiceNotUpLogic;
 import brooklyn.entity.drivers.DriverDependentEntity;
 import brooklyn.entity.drivers.EntityDriverManager;
+import brooklyn.entity.effector.EffectorBody;
 import brooklyn.event.feed.function.FunctionFeed;
 import brooklyn.event.feed.function.FunctionPollConfig;
 import brooklyn.location.Location;
@@ -69,9 +71,9 @@ import com.google.common.collect.Iterables;
  * It exposes sensors for service state (Lifecycle) and status (String), and for host info, log file location.
  */
 public abstract class SoftwareProcessImpl extends AbstractEntity implements SoftwareProcess, DriverDependentEntity {
-	private static final Logger log = LoggerFactory.getLogger(SoftwareProcessImpl.class);
+    private static final Logger log = LoggerFactory.getLogger(SoftwareProcessImpl.class);
     
-	private transient SoftwareProcessDriver driver;
+    private transient SoftwareProcessDriver driver;
 
     /** @see #connectServiceUpIsRunning() */
     private volatile FunctionFeed serviceProcessIsRunning;
@@ -90,9 +92,9 @@ public abstract class SoftwareProcessImpl extends AbstractEntity implements Soft
     public SoftwareProcessImpl(Map properties) {
         this(properties, null);
     }
-	public SoftwareProcessImpl(Map properties, Entity parent) {
-		super(properties, parent);
-	}
+    public SoftwareProcessImpl(Map properties, Entity parent) {
+        super(properties, parent);
+    }
 
     protected void setProvisioningLocation(MachineProvisioningLocation val) {
         if (getAttribute(PROVISIONING_LOCATION) != null) throw new IllegalStateException("Cannot change provisioning location: existing="+getAttribute(PROVISIONING_LOCATION)+"; new="+val);
@@ -103,11 +105,12 @@ public abstract class SoftwareProcessImpl extends AbstractEntity implements Soft
         return getAttribute(PROVISIONING_LOCATION);
     }
     
-	public SoftwareProcessDriver getDriver() {
-	    return driver;
-	}
+    @Override
+    public SoftwareProcessDriver getDriver() {
+        return driver;
+    }
 
-  	protected SoftwareProcessDriver newDriver(MachineLocation loc){
+    protected SoftwareProcessDriver newDriver(MachineLocation loc){
         EntityDriverManager entityDriverManager = getManagementContext().getEntityDriverManager();
         return (SoftwareProcessDriver)entityDriverManager.build(this, loc);
     }
@@ -117,17 +120,25 @@ public abstract class SoftwareProcessImpl extends AbstractEntity implements Soft
     }
 
     @Override
+    public void init() {
+        super.init();
+        LIFECYCLE_TASKS.attachLifecycleEffectors(this);
+    }
+    
+    @Override
     protected void initEnrichers() {
         super.initEnrichers();
+        ServiceNotUpLogic.updateNotUpIndicator(this, SERVICE_PROCESS_IS_RUNNING, "No information yet about whether this service is running");
+        // add an indicator above so that if is_running comes through it clears the map and guarantees an update
         addEnricher(Enrichers.builder().updatingMap(Attributes.SERVICE_NOT_UP_INDICATORS)
             .from(SERVICE_PROCESS_IS_RUNNING)
             .computing(Functionals.ifNotEquals(true).value("The software process for this entity does not appear to be running"))
             .build());
     }
     
-  	/**
-  	 * Called before driver.start; guarantees the driver will exist, and locations will have been set.
-  	 */
+      /**
+       * Called before driver.start; guarantees the driver will exist, and locations will have been set.
+       */
     protected void preStart() {
     }
     
@@ -203,6 +214,12 @@ public abstract class SoftwareProcessImpl extends AbstractEntity implements Soft
     }
 
     /**
+     * Called after the rest of stop has completed (after VM deprovisioned, but before state set to STOPPED)
+     */
+    protected void postStop() {
+    }
+
+    /**
      * For disconnecting from the running app. Will be called on stop.
      */
     protected void disconnectSensors() {
@@ -254,9 +271,9 @@ public abstract class SoftwareProcessImpl extends AbstractEntity implements Soft
             ServiceStateLogic.setExpectedState(this, Lifecycle.CREATED);
             // force actual to be created because this is expected subsequently
             setAttribute(SERVICE_STATE_ACTUAL, Lifecycle.CREATED);
-    	}
+        }
     }
-	
+    
     @Override 
     public void onManagementStarted() {
         super.onManagementStarted();
@@ -271,7 +288,7 @@ public abstract class SoftwareProcessImpl extends AbstractEntity implements Soft
     public void rebind() {
         Lifecycle state = getAttribute(SERVICE_STATE_ACTUAL);
         if (state == null || state != Lifecycle.RUNNING) {
-            log.warn("On rebind of {}, not rebinding because state is {}", this, state);
+            log.warn("On rebind of {}, not calling software process rebind hooks because state is {}", this, state);
             return;
         }
 
@@ -323,8 +340,8 @@ public abstract class SoftwareProcessImpl extends AbstractEntity implements Soft
     protected final void startInLocation(Location location) {}
 
     /** @deprecated since 0.6.0 use/override method in {@link SoftwareProcessDriverLifecycleEffectorTasks} */
-	protected final void startInLocation(final MachineProvisioningLocation<?> location) {}
-	
+    protected final void startInLocation(final MachineProvisioningLocation<?> location) {}
+    
     /** @deprecated since 0.6.0 use/override method in {@link SoftwareProcessDriverLifecycleEffectorTasks} */
     protected final void startInLocation(MachineLocation machine) {}
 
@@ -360,7 +377,7 @@ public abstract class SoftwareProcessImpl extends AbstractEntity implements Soft
     /** @deprecated since 0.6.0 use {@link Machines#findSubnetHostname(Entity)} */ @Deprecated
     public String getLocalHostname() {
         return Machines.findSubnetHostname(this).get();
-	}
+    }
 
     protected void initDriver(MachineLocation machine) {
         SoftwareProcessDriver newDriver = doInitDriver(machine);
@@ -387,7 +404,7 @@ public abstract class SoftwareProcessImpl extends AbstractEntity implements Soft
         }
     }
     
-	// TODO Find a better way to detect early death of process.
+    // TODO Find a better way to detect early death of process.
     public void waitForEntityStart() {
         if (log.isDebugEnabled()) log.debug("waiting to ensure {} doesn't abort prematurely", this);
         Duration startTimeout = getConfig(START_TIMEOUT);
@@ -435,14 +452,14 @@ public abstract class SoftwareProcessImpl extends AbstractEntity implements Soft
      * If custom behaviour is required by sub-classes, consider overriding {@link #doStop()}.
      */
     @Override
-	public final void stop() {
-	    // TODO There is a race where we set SERVICE_UP=false while sensor-adapter threads may still be polling.
+    public final void stop() {
+        // TODO There is a race where we set SERVICE_UP=false while sensor-adapter threads may still be polling.
         // The other thread might reset SERVICE_UP to true immediately after we set it to false here.
         // Deactivating adapters before setting SERVICE_UP reduces the race, and it is reduced further by setting
         // SERVICE_UP to false at the end of stop as well.
-	    
-	    // Perhaps we should wait until all feeds have completed here, 
-	    // or do a SERVICE_STATE check before setting SERVICE_UP to true in a feed (?).
+        
+        // Perhaps we should wait until all feeds have completed here, 
+        // or do a SERVICE_STATE check before setting SERVICE_UP to true in a feed (?).
 
         if (DynamicTasks.getTaskQueuingContext() != null) {
             doStop();
@@ -450,7 +467,7 @@ public abstract class SoftwareProcessImpl extends AbstractEntity implements Soft
             Task<?> task = Tasks.builder().name("stop").body(new Runnable() { public void run() { doStop(); } }).build();
             Entities.submit(this, task).getUnchecked();
         }
-	}
+    }
 
     /**
      * If custom behaviour is required by sub-classes, consider overriding {@link #doRestart()}.
@@ -458,9 +475,9 @@ public abstract class SoftwareProcessImpl extends AbstractEntity implements Soft
     @Override
     public final void restart() {
         if (DynamicTasks.getTaskQueuingContext() != null) {
-            doRestart();
+            doRestart(ConfigBag.EMPTY);
         } else {
-            Task<?> task = Tasks.builder().name("restart").body(new Runnable() { public void run() { doRestart(); } }).build();
+            Task<?> task = Tasks.builder().name("restart").body(new Runnable() { public void run() { doRestart(ConfigBag.EMPTY); } }).build();
             Entities.submit(this, task).getUnchecked();
         }
     }
@@ -468,24 +485,39 @@ public abstract class SoftwareProcessImpl extends AbstractEntity implements Soft
     /**
      * To be overridden instead of {@link #start(Collection)}; sub-classes should call {@code super.doStart(locations)} and should
      * add do additional work via tasks, executed using {@link DynamicTasks#queue(String, Callable)}.
+     * @deprecated since 0.7.0 override {@link #preStart()} or {@link #postStart()}, 
+     * or define a {@link SoftwareProcessDriverLifecycleEffectorTasks} subclass if more complex behaviour needed
+     * (this method is no longer invoked by the {@link EffectorBody} call path, 
+     * hence deprecating it and marking it final to highlight incompatibilities at compile time)
      */
-    protected void doStart(Collection<? extends Location> locations) {
+    @Deprecated
+    protected final void doStart(Collection<? extends Location> locations) {
         LIFECYCLE_TASKS.start(locations);
     }
     
     /**
      * To be overridden instead of {@link #stop()}; sub-classes should call {@code super.doStop()} and should
      * add do additional work via tasks, executed using {@link DynamicTasks#queue(String, Callable)}.
+     * @deprecated since 0.7.0 override {@link #preStop()} or {@link #postStop()}; see note on {@link #doStart(Collection)} for more information 
      */
-    protected void doStop() {
+    @Deprecated
+    protected final void doStop() {
         LIFECYCLE_TASKS.stop();
     }
-	
+    
     /**
-     * To be overridden instead of {@link #restart()}; sub-classes should call {@code super.doRestart()} and should
+     * To be overridden instead of {@link #restart()}; sub-classes should call {@code super.doRestart(ConfigBag)} and should
      * add do additional work via tasks, executed using {@link DynamicTasks#queue(String, Callable)}.
+     * @deprecated since 0.7.0; see note on {@link #doStart(Collection)} for more information 
      */
-    protected void doRestart() {
-        LIFECYCLE_TASKS.restart();
+    @Deprecated
+    protected final void doRestart(ConfigBag parameters) {
+        LIFECYCLE_TASKS.restart(parameters);
     }
+
+    @Deprecated /** @deprecated since 0.7.0 see {@link #doRestart(ConfigBag)} */
+    protected final void doRestart() {
+        doRestart(ConfigBag.EMPTY);
+    }
+    
 }
