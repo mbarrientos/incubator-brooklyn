@@ -22,6 +22,7 @@ import static org.testng.Assert.assertEquals;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -56,6 +57,7 @@ public class TypeCoercionsTest {
     @Test
     public void testCoerceStringToPrimitive() {
         assertEquals(TypeCoercions.coerce("1", Character.class), (Character)'1');
+        assertEquals(TypeCoercions.coerce(" ", Character.class), (Character)' ');
         assertEquals(TypeCoercions.coerce("1", Short.class), (Short)((short)1));
         assertEquals(TypeCoercions.coerce("1", Integer.class), (Integer)1);
         assertEquals(TypeCoercions.coerce("1", Long.class), (Long)1l);
@@ -63,7 +65,8 @@ public class TypeCoercionsTest {
         assertEquals(TypeCoercions.coerce("1", Double.class), (Double)1d);
         assertEquals(TypeCoercions.coerce("true", Boolean.class), (Boolean)true);
         assertEquals(TypeCoercions.coerce("False", Boolean.class), (Boolean)false);
-        
+        assertEquals(TypeCoercions.coerce("true ", Boolean.class), (Boolean)true);
+
         assertEquals(TypeCoercions.coerce("1", char.class), (Character)'1');
         assertEquals(TypeCoercions.coerce("1", short.class), (Short)((short)1));
         assertEquals(TypeCoercions.coerce("1", int.class), (Integer)1);
@@ -181,6 +184,36 @@ public class TypeCoercionsTest {
         List<?> s = TypeCoercions.coerce(ImmutableSet.of(1), List.class);
         Assert.assertEquals(s, ImmutableList.of(1));
     }
+    
+    @Test
+    public void testListEntryCoercion() {
+        List<?> s = TypeCoercions.coerce(ImmutableList.of("java.lang.Integer", "java.lang.Double"), new TypeToken<List<Class<?>>>() { });
+        Assert.assertEquals(s, ImmutableList.of(Integer.class, Double.class));
+    }
+    
+    @Test
+    public void testListEntryToSetCoercion() {
+        Set<?> s = TypeCoercions.coerce(ImmutableList.of("java.lang.Integer", "java.lang.Double"), new TypeToken<Set<Class<?>>>() { });
+        Assert.assertEquals(s, ImmutableSet.of(Integer.class, Double.class));
+    }
+    
+    @Test
+    public void testListEntryToCollectionCoercion() {
+        Collection<?> s = TypeCoercions.coerce(ImmutableList.of("java.lang.Integer", "java.lang.Double"), new TypeToken<Collection<Class<?>>>() { });
+        Assert.assertEquals(s, ImmutableList.of(Integer.class, Double.class));
+    }
+    
+    @Test
+    public void testMapValueCoercion() {
+        Map<?,?> s = TypeCoercions.coerce(ImmutableMap.of("int", "java.lang.Integer", "double", "java.lang.Double"), new TypeToken<Map<String, Class<?>>>() { });
+        Assert.assertEquals(s, ImmutableMap.of("int", Integer.class, "double", Double.class));
+    }
+    
+    @Test
+    public void testMapKeyCoercion() {
+        Map<?,?> s = TypeCoercions.coerce(ImmutableMap.of("java.lang.Integer", "int", "java.lang.Double", "double"), new TypeToken<Map<Class<?>, String>>() { });
+        Assert.assertEquals(s, ImmutableMap.of(Integer.class, "int", Double.class, "double"));
+    }
 
     @Test
     public void testStringToListCoercion() {
@@ -189,15 +222,71 @@ public class TypeCoercionsTest {
     }
 
     @Test
-    public void testStringToMapCoercion() {
-        Map<?,?> s = TypeCoercions.coerce("a=1,b=2,c=3", Map.class);
-        Assert.assertEquals(s, ImmutableMap.of("a", "1", "b", "2", "c", "3"));
+    @SuppressWarnings("serial")
+    public void testCoerceRecursivelyStringToGenericsCollection() {
+        assertEquals(TypeCoercions.coerce("1,2", new TypeToken<List<Integer>>() {}), ImmutableList.of(1, 2));
+    }
+    
+    @Test
+    public void testJsonStringToMapCoercion() {
+        Map<?,?> s = TypeCoercions.coerce("{ \"a\" : \"1\", b : 2 }", Map.class);
+        Assert.assertEquals(s, ImmutableMap.of("a", "1", "b", 2));
     }
 
     @Test
-    public void testJsonStringToMapCoercion() {
-        Map<?,?> s = TypeCoercions.coerce("{ \"a\" : \"1\", \"b\" : \"2\", \"c\" : \"3\" }", Map.class);
-        Assert.assertEquals(s, ImmutableMap.of("a", "1", "b", "2", "c", "3"));
+    public void testJsonStringWithoutQuotesToMapCoercion() {
+        Map<?,?> s = TypeCoercions.coerce("{ a : 1 }", Map.class);
+        Assert.assertEquals(s, ImmutableMap.of("a", 1));
+    }
+
+    @Test
+    public void testJsonComplexTypesToMapCoercion() {
+        Map<?,?> s = TypeCoercions.coerce("{ a : [1, \"2\", '\"3\"'], b: { c: d, 'e': \"f\" } }", Map.class);
+        Assert.assertEquals(s, ImmutableMap.of("a", ImmutableList.<Object>of(1, "2", "\"3\""), 
+            "b", ImmutableMap.of("c", "d", "e", "f")));
+    }
+
+    @Test
+    public void testJsonStringWithoutBracesToMapCoercion() {
+        Map<?,?> s = TypeCoercions.coerce("a : 1", Map.class);
+        Assert.assertEquals(s, ImmutableMap.of("a", 1));
+    }
+
+    @Test
+    public void testJsonStringWithoutBracesWithMultipleToMapCoercion() {
+        Map<?,?> s = TypeCoercions.coerce("a : 1, b : 2", Map.class);
+        Assert.assertEquals(s, ImmutableMap.of("a", 1, "b", 2));
+    }
+
+    @Test
+    public void testKeyEqualsValueStringToMapCoercion() {
+        Map<?,?> s = TypeCoercions.coerce("a=1,b=2", Map.class);
+        Assert.assertEquals(s, ImmutableMap.of("a", "1", "b", "2"));
+    }
+
+    @Test(expectedExceptions=IllegalArgumentException.class)
+    public void testJsonStringWithoutBracesOrSpaceDisallowedAsMapCoercion() {
+        // yaml requires spaces after the colon
+        Map<?,?> s = TypeCoercions.coerce("a:1,b:2", Map.class);
+        Assert.assertEquals(s, ImmutableMap.of("a", 1, "b", 2));
+    }
+    
+    @Test
+    public void testEqualsInBracesMapCoercion() {
+        Map<?,?> s = TypeCoercions.coerce("{ a = 1, b = '2' }", Map.class);
+        Assert.assertEquals(s, ImmutableMap.of("a", 1, "b", "2"));
+    }
+
+    @Test
+    public void testKeyEqualsOrColonValueWithBracesStringToMapCoercion() {
+        Map<?,?> s = TypeCoercions.coerce("{ a=1, b: 2 }", Map.class);
+        Assert.assertEquals(s, ImmutableMap.of("a", "1", "b", 2));
+    }
+
+    @Test
+    public void testKeyEqualsOrColonValueWithoutBracesStringToMapCoercion() {
+        Map<?,?> s = TypeCoercions.coerce("a=1, b: 2", Map.class);
+        Assert.assertEquals(s, ImmutableMap.of("a", "1", "b", 2));
     }
 
     @Test

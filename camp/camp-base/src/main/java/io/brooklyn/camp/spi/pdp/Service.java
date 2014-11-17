@@ -18,8 +18,6 @@
  */
 package io.brooklyn.camp.spi.pdp;
 
-import io.brooklyn.util.yaml.Yamls;
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -27,6 +25,7 @@ import java.util.Map;
 import org.apache.commons.lang3.builder.ToStringBuilder;
 
 import brooklyn.util.collections.MutableMap;
+import brooklyn.util.yaml.Yamls;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -49,7 +48,7 @@ public class Service {
         result.name = (String) fields.remove("name");
         result.description = (String) fields.remove("description");
         // FIXME _type needed in lots of places
-        result.serviceType = (String) (String) Yamls.removeMultinameAttribute(fields, "service_type", "serviceType", "type");
+        result.serviceType = (String) Yamls.removeMultinameAttribute(fields, "service_type", "serviceType", "type");
         
         result.characteristics = new ArrayList<ServiceCharacteristic>();
         Object chars = fields.remove("characteristics");

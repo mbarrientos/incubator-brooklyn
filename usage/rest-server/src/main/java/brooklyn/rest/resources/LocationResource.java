@@ -19,7 +19,6 @@
 package brooklyn.rest.resources;
 
 import java.net.URI;
-import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -48,8 +47,6 @@ import brooklyn.util.text.Identifiers;
 
 import com.google.common.base.Function;
 import com.google.common.collect.FluentIterable;
-import com.google.common.collect.Iterables;
-import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 
 public class LocationResource extends AbstractBrooklynRestResource implements LocationApi {
@@ -82,7 +79,7 @@ public class LocationResource extends AbstractBrooklynRestResource implements Lo
         return FluentIterable.from(brooklyn().getLocationRegistry().getDefinedLocations().values())
                 .transform(transformer)
                 .filter(LocationSummary.class)
-                .toSortedList(SummaryComparators.nameComparator());
+                .toSortedList(SummaryComparators.displayNameComparator());
     }
 
     // this is here to support the web GUI's circles
@@ -131,7 +128,9 @@ public class LocationResource extends AbstractBrooklynRestResource implements Lo
       String id = Identifiers.makeRandomId(8);
       LocationDefinition l = new BasicLocationDefinition(id, locationSpec.getName(), locationSpec.getSpec(), locationSpec.getConfig());
       brooklyn().getLocationRegistry().updateDefinedLocation(l);
-      return Response.created(URI.create(id)).build();
+      return Response.created(URI.create(id))
+              .entity(LocationTransformer.newInstance(mgmt(), l, LocationDetailLevel.LOCAL_EXCLUDING_SECRET))
+              .build();
   }
 
   public void delete(String locationId) {

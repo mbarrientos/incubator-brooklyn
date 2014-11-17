@@ -54,7 +54,7 @@ public class VanillaBashNetcatYamlTest extends AbstractYamlTest {
     public void testInvocationSensorAndEnricher() throws Exception {
         Preconditions.checkArgument(Networking.isPortAvailable(4321), "port 4321 must not be in use (no leaked nc instances) for this test to succeed!");
         
-        Entity app = createAndStartApplication("vanilla-bash-netcat-w-client.yaml");
+        Entity app = createAndStartApplication(loadYaml("vanilla-bash-netcat-w-client.yaml"));
         waitForApplicationTasks(app);
         
         log.info("App started:");
@@ -68,7 +68,7 @@ public class VanillaBashNetcatYamlTest extends AbstractYamlTest {
         Entity netcat = Iterables.getOnlyElement(netcatI);
         
         // make sure netcat is running
-        EntityTestUtils.assertAttributeEventually(netcat, Attributes.SERVICE_STATE, Predicates.equalTo(Lifecycle.RUNNING));
+        EntityTestUtils.assertAttributeEventually(netcat, Attributes.SERVICE_STATE_ACTUAL, Predicates.equalTo(Lifecycle.RUNNING));
         
         // find the pinger, now comparing by name
         Iterable<Entity> pingerI = Iterables.filter(app.getChildren(), EntityPredicates.displayNameEqualTo("Simple Pinger"));
@@ -85,10 +85,10 @@ public class VanillaBashNetcatYamlTest extends AbstractYamlTest {
             netcat.getAttribute(SENSOR_OUTPUT_ALL));
 
         // netcat should now fail and restart
-        EntityTestUtils.assertAttributeEventually(netcat, Attributes.SERVICE_STATE, Predicates.not(Predicates.equalTo(Lifecycle.RUNNING)));
-        log.info("detected failure, state is: "+netcat.getAttribute(Attributes.SERVICE_STATE));
-        EntityTestUtils.assertAttributeEventually(netcat, Attributes.SERVICE_STATE, Predicates.equalTo(Lifecycle.RUNNING));
-        log.info("detected recovery, state is: "+netcat.getAttribute(Attributes.SERVICE_STATE));
+        EntityTestUtils.assertAttributeEventually(netcat, Attributes.SERVICE_STATE_ACTUAL, Predicates.not(Predicates.equalTo(Lifecycle.RUNNING)));
+        log.info("detected failure, state is: "+netcat.getAttribute(Attributes.SERVICE_STATE_ACTUAL));
+        EntityTestUtils.assertAttributeEventually(netcat, Attributes.SERVICE_STATE_ACTUAL, Predicates.equalTo(Lifecycle.RUNNING));
+        log.info("detected recovery, state is: "+netcat.getAttribute(Attributes.SERVICE_STATE_ACTUAL));
 
         // invoke effector again, now with a parameter
         ping = pinger.invoke(EFFECTOR_SAY_HI, MutableMap.<String,Object>of("message", "yo yo yo"));

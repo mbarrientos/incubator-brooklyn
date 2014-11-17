@@ -19,6 +19,8 @@
 package brooklyn.entity.basic.lifecycle;
 
 import static java.lang.String.format;
+
+import brooklyn.util.internal.ssh.ShellTool;
 import groovy.lang.Closure;
 
 import java.io.ByteArrayOutputStream;
@@ -66,6 +68,7 @@ public class ScriptHelper {
     public final ScriptPart body = new ScriptPart(this);
     public final ScriptPart footer = new ScriptPart(this);
     
+    @SuppressWarnings("rawtypes")
     protected final Map flags = new LinkedHashMap();
     protected Predicate<? super Integer> resultCodeCheck = Predicates.alwaysTrue();
     protected Predicate<? super ScriptHelper> executionCheck = Predicates.alwaysTrue();
@@ -74,6 +77,7 @@ public class ScriptHelper {
     protected boolean isInessential = false;
     protected boolean closeSshConnection = false;
     protected boolean gatherOutput = false;
+    protected boolean noExtraOutput = false;
     protected ByteArrayOutputStream stdout, stderr;
     protected Task<Integer> task;
 
@@ -86,6 +90,7 @@ public class ScriptHelper {
      * Takes a closure which accepts this ScriptHelper and returns true or false
      * as to whether the script needs to run (or can throw error if desired)
      */
+    @SuppressWarnings({ "rawtypes", "unchecked" })
     public ScriptHelper executeIf(Closure c) {
         Predicate<ScriptHelper> predicate = GroovyJavaMethods.predicateFromClosure(c);
         return executeIf(predicate);
@@ -174,6 +179,7 @@ public class ScriptHelper {
      * closure always returns true (and the exit code is made available to the
      * caller if they care)
      */
+    @SuppressWarnings({ "rawtypes", "unchecked" })
     public ScriptHelper requireResultCode(Closure integerFilter) {
         Predicate<Integer> objectPredicate = GroovyJavaMethods.predicateFromClosure(integerFilter);
         return requireResultCode(objectPredicate);
@@ -227,7 +233,26 @@ public class ScriptHelper {
         gatherOutput = gather;
         return this;
     }
-    
+
+    /**
+     * Indicate that no extra output should be appended to stdout.
+     * <p>
+     * By default Brooklyn appends a message like
+     * "<tt>Executed /tmp/brooklyn-20141010-164855950...sh, result 0</tt>"
+     * to script output.
+     */
+    public ScriptHelper noExtraOutput() {
+        return noExtraOutput(true);
+    }
+
+    /**
+     * @see #noExtraOutput()
+     */
+    private ScriptHelper noExtraOutput(boolean output) {
+        this.noExtraOutput = output;
+        return this;
+    }
+
     /** The connection should be closed and disconnected once the commands have executed. */
     public ScriptHelper closeSshConnection() {
         closeSshConnection = true;
@@ -266,7 +291,7 @@ public class ScriptHelper {
                 stdin.write(line.getBytes());
                 stdin.write("\n".getBytes());
             }
-            tb.tag(BrooklynTaskTags.tagForStream(BrooklynTaskTags.STREAM_STDIN, stdin));
+            tb.tag(BrooklynTaskTags.tagForStreamSoft(BrooklynTaskTags.STREAM_STDIN, stdin));
         } catch (IOException e) {
             log.warn("Error registering stream "+BrooklynTaskTags.STREAM_STDIN+" on "+tb+": "+e, e);
         }
@@ -280,9 +305,9 @@ public class ScriptHelper {
         
         if (gatherOutput) {
             stdout = new ByteArrayOutputStream();
-            tb.tag(BrooklynTaskTags.tagForStream(BrooklynTaskTags.STREAM_STDOUT, stdout));
+            tb.tag(BrooklynTaskTags.tagForStreamSoft(BrooklynTaskTags.STREAM_STDOUT, stdout));
             stderr = new ByteArrayOutputStream();
-            tb.tag(BrooklynTaskTags.tagForStream(BrooklynTaskTags.STREAM_STDERR, stderr));
+            tb.tag(BrooklynTaskTags.tagForStreamSoft(BrooklynTaskTags.STREAM_STDERR, stderr));
         }
         task = tb.build();
         if (isTransient) BrooklynTaskTags.setTransient(task);
@@ -312,6 +337,7 @@ public class ScriptHelper {
         }
     }
     
+    @SuppressWarnings({ "rawtypes", "unchecked" })
     public int executeInternal() {
         if (!executionCheck.apply(this)) {
             return 0;
@@ -333,6 +359,7 @@ public class ScriptHelper {
                 flags.put("out", stdout);
                 flags.put("err", stderr);
             }
+            flags.put(ShellTool.PROP_NO_EXTRA_OUTPUT.getName(), noExtraOutput);
             result = runner.execute(flags, lines, summary);
         } catch (RuntimeInterruptedException e) {
             throw logWithDetailsAndThrow(format("Execution failed, invocation error for %s: %s", summary, e.getMessage()), e);
@@ -358,10 +385,12 @@ public class ScriptHelper {
         throw new IllegalStateException(message);
     }
 
+    @SuppressWarnings("rawtypes")
     public Map getFlags() {
         return flags;
     }
     
+    @SuppressWarnings("unchecked")
     public ScriptHelper setFlag(String flag, Object value) {
         flags.put(flag, value);
         return this;

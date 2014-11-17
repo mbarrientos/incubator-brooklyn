@@ -36,16 +36,18 @@ import brooklyn.util.flags.TypeCoercions;
 
 import com.google.common.collect.Sets;
 
-public class BasicLocationRebindSupport implements RebindSupport<LocationMemento> {
+public class BasicLocationRebindSupport extends AbstractBrooklynObjectRebindSupport<LocationMemento> {
 
     private static final Logger LOG = LoggerFactory.getLogger(BasicLocationRebindSupport.class);
     
     private final AbstractLocation location;
     
     public BasicLocationRebindSupport(AbstractLocation location) {
+        super(location);
         this.location = location;
     }
     
+    // Can rely on super-type once the deprecated getMementoWithProperties is deleted
     @Override
     public LocationMemento getMemento() {
         return getMementoWithProperties(Collections.<String,Object>emptyMap());
@@ -57,19 +59,16 @@ public class BasicLocationRebindSupport implements RebindSupport<LocationMemento
     @Deprecated
     protected LocationMemento getMementoWithProperties(Map<String,?> props) {
         LocationMemento memento = MementosGenerators.newLocationMementoBuilder(location).customFields(props).build();
-    	if (LOG.isTraceEnabled()) LOG.trace("Creating memento for location: {}", memento.toVerboseString());
-    	return memento;
+        if (LOG.isTraceEnabled()) LOG.trace("Creating memento for location: {}", memento.toVerboseString());
+        return memento;
     }
 
     @Override
-    public void reconstruct(RebindContext rebindContext, LocationMemento memento) {
-    	if (LOG.isTraceEnabled()) LOG.trace("Reconstructing location: {}", memento.toVerboseString());
-
-    	// FIXME Treat config like we do for entities; this code will disappear when locations become entities.
-    	
-    	// Note that the flags have been set in the constructor
+    protected void addConfig(RebindContext rebindContext, LocationMemento memento) {
+        // FIXME Treat config like we do for entities; this code will disappear when locations become entities.
+        
+        // Note that the flags have been set in the constructor
         // FIXME Relies on location.getLocalConfigBag being mutable (to modify the location's own config)
-        location.setName(memento.getDisplayName());
         
         location.getLocalConfigBag().putAll(memento.getLocationConfig()).markAll(
                 Sets.difference(memento.getLocationConfig().keySet(), memento.getLocationConfigUnused())).
@@ -89,7 +88,7 @@ public class BasicLocationRebindSupport implements RebindSupport<LocationMemento
                 // And use magic of setFieldFromFlag's magic to either set config or field as appropriate.
                 if (ConfigKey.class.isAssignableFrom(fieldType)) {
                     ConfigKey<?> configKey = (ConfigKey<?>) FlagUtils.getField(location, field);
-                    value = TypeCoercions.coerce(entry.getValue(), configKey.getType());
+                    value = TypeCoercions.coerce(entry.getValue(), configKey.getTypeToken());
                 } else {
                     value = TypeCoercions.coerce(entry.getValue(), fieldType);
                 }
@@ -101,22 +100,17 @@ public class BasicLocationRebindSupport implements RebindSupport<LocationMemento
                 // FIXME How to do findFieldForFlag without throwing exception if it's not there?
             }
         }
-        
+    }
+    
+    @Override
+    protected void addCustoms(RebindContext rebindContext, LocationMemento memento) {
         setParent(rebindContext, memento);
         addChildren(rebindContext, memento);
         location.init(); // TODO deprecated calling init; will be deleted
-        location.rebind();
-        
-        doReconstruct(rebindContext, memento);
     }
 
     @Override
-    public void addPolicies(RebindContext rebindContext, LocationMemento Memento) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void addEnrichers(RebindContext rebindContext, LocationMemento Memento) {
+    public void addFeeds(RebindContext rebindContext, LocationMemento Memento) {
         throw new UnsupportedOperationException();
     }
 
@@ -124,9 +118,9 @@ public class BasicLocationRebindSupport implements RebindSupport<LocationMemento
         for (String childId : memento.getChildren()) {
             Location child = rebindContext.getLocation(childId);
             if (child != null) {
-            	location.addChild(child);
+                location.addChild(child);
             } else {
-            	LOG.warn("Ignoring child {} of location {}({}), as cannot be found", new Object[] {childId, memento.getType(), memento.getId()});
+                LOG.warn("Ignoring child {} of location {}({}), as cannot be found", new Object[] {childId, memento.getType(), memento.getId()});
             }
         }
     }
@@ -136,14 +130,7 @@ public class BasicLocationRebindSupport implements RebindSupport<LocationMemento
         if (parent != null) {
             location.setParent(parent);
         } else if (memento.getParent() != null) {
-        	LOG.warn("Ignoring parent {} of location {}({}), as cannot be found", new Object[] {memento.getParent(), memento.getType(), memento.getId()});
+            LOG.warn("Ignoring parent {} of location {}({}), as cannot be found", new Object[] {memento.getParent(), memento.getType(), memento.getId()});
         }
-    }
-    
-    /**
-     * For overriding, to give custom reconsruct behaviour.
-     */
-    protected void doReconstruct(RebindContext rebindContext, LocationMemento memento) {
-        // default is no-op
     }
 }

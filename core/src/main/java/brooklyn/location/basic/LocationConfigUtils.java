@@ -110,8 +110,6 @@ public class LocationConfigUtils {
      * Returns the file contents, or null if none of the files can be read.
      *  
      * @param files             list of file paths
-     * @param fileContext       what this file refers to (e.g. privateKeyFile)
-     * @param configDescription what this file is being read for 
      */
     private static String getFileContents(Iterable<String> files) {
         int size = Iterables.size(files);
@@ -149,7 +147,7 @@ public class LocationConfigUtils {
         if (!Objects.equal(value1, value2)) {
             // points to a bug in one of the get-with-deprecation methods
             log.warn("Deprecated getConfig with deprecated keys "+Arrays.toString(deprecatedKeys)+" gets different value with " +
-            		"new strategy "+preferredKey+" ("+value1+") and old ("+value2+"); preferring old value for now, but this behaviour will change");
+                    "new strategy "+preferredKey+" ("+value1+") and old ("+value2+"); preferring old value for now, but this behaviour will change");
             return value2;
         }
         return value1;
@@ -180,7 +178,7 @@ public class LocationConfigUtils {
                             // fine -- nothing
                         } else {
                             log.warn("Detected deprecated key "+deprecatedKey+" with value "+altValue+" used in addition to "+keyProvidingValue+" " +
-                            		"with value "+value+" for "+configBag.getDescription()+"; ignoring");
+                                    "with value "+value+" for "+configBag.getDescription()+"; ignoring");
                             configBag.remove(deprecatedKey);
                         }
                     } else {

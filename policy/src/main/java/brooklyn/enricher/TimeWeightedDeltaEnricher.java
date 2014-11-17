@@ -23,6 +23,7 @@ import groovy.lang.Closure;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import brooklyn.catalog.Catalog;
 import brooklyn.enricher.basic.AbstractTypeTransformingEnricher;
 import brooklyn.entity.Entity;
 import brooklyn.event.AttributeSensor;
@@ -30,6 +31,8 @@ import brooklyn.event.Sensor;
 import brooklyn.event.SensorEvent;
 import brooklyn.util.GroovyJavaMethods;
 import brooklyn.util.flags.SetFromFlag;
+import brooklyn.util.javalang.JavaClassNames;
+import brooklyn.util.time.Duration;
 
 import com.google.common.base.Function;
 import com.google.common.base.Functions;
@@ -40,6 +43,9 @@ import com.google.common.base.Functions;
  * <p>
  * NB for time (e.g. "total milliseconds consumed") use {@link TimeFractionDeltaEnricher}
  */
+//@Catalog(name="Time-weighted Delta", description="Converts an absolute sensor into a delta sensor "
+//        + "(i.e. the diff between the current and previous value), presented as a units/timeUnit "
+//        + "based on the event timing.")
 public class TimeWeightedDeltaEnricher<T extends Number> extends AbstractTypeTransformingEnricher<T,Double> {
     private static final Logger LOG = LoggerFactory.getLogger(TimeWeightedDeltaEnricher.class);
     
@@ -73,6 +79,9 @@ public class TimeWeightedDeltaEnricher<T extends Number> extends AbstractTypeTra
         super(producer, source, target);
         this.unitMillis = unitMillis;
         this.postProcessor = postProcessor;
+        
+        if (source!=null && target!=null)
+            this.uniqueTag = JavaClassNames.simpleClassName(getClass())+":"+source.getName()+"/"+Duration.millis(unitMillis)+"->"+target.getName();
     }
     
     @Override

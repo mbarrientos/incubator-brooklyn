@@ -21,8 +21,10 @@ package brooklyn.entity.basic;
 import java.util.Collection;
 import java.util.Map;
 
+import brooklyn.basic.BrooklynObjectInternal;
 import brooklyn.config.ConfigKey;
 import brooklyn.entity.Effector;
+import brooklyn.entity.Feed;
 import brooklyn.entity.rebind.RebindSupport;
 import brooklyn.entity.rebind.Rebindable;
 import brooklyn.event.AttributeSensor;
@@ -41,7 +43,7 @@ import com.google.common.annotations.Beta;
  * for the brooklyn framework only).
  */
 @Beta
-public interface EntityInternal extends EntityLocal, Rebindable {
+public interface EntityInternal extends BrooklynObjectInternal, EntityLocal, Rebindable {
     
     void addLocations(Collection<? extends Location> locations);
 
@@ -78,13 +80,13 @@ public interface EntityInternal extends EntityLocal, Rebindable {
     ConfigBag getLocalConfigBag();
 
     @Beta
-    public Map<AttributeSensor, Object> getAllAttributes();
+    Map<AttributeSensor, Object> getAllAttributes();
 
     @Beta
-    public void removeAttribute(AttributeSensor<?> attribute);
+    void removeAttribute(AttributeSensor<?> attribute);
     
     @Beta
-    public void refreshInheritedConfig();
+    void refreshInheritedConfig();
 
     /**
      * Must be called before the entity is started.
@@ -131,9 +133,24 @@ public interface EntityInternal extends EntityLocal, Rebindable {
     @Beta
     Effector<?> getEffector(String effectorName);
     
+    FeedSupport feeds();
+    
+    /**
+     * @since 0.7.0-M2
+     * @deprecated since 0.7.0-M2; use {@link #feeds()}
+     */
+    @Deprecated
+    FeedSupport getFeedSupport();
+
     Map<String, String> toMetadataRecord();
     
+    /**
+     * Users are strongly discouraged from calling or overriding this method.
+     * It is for internal calls only, relating to persisting/rebinding entities.
+     * This method may change (or be removed) in a future release without notice.
+     */
     @Override
+    @Beta
     RebindSupport<EntityMemento> getRebindSupport();
 
     /**
@@ -141,4 +158,26 @@ public interface EntityInternal extends EntityLocal, Rebindable {
      * This persistence may happen asynchronously, or may not happen at all if persistence is disabled.
      */
     void requestPersist();
+    
+    public interface FeedSupport {
+        Collection<Feed> getFeeds();
+        
+        /**
+         * Adds the given feed to this entity. The feed will automatically be re-added on brooklyn restart.
+         */
+        <T extends Feed> T addFeed(T feed);
+        
+        /**
+         * Removes the given feed from this entity. 
+         * @return True if the feed existed at this entity; false otherwise
+         */
+        boolean removeFeed(Feed feed);
+        
+        /**
+         * Removes all feeds from this entity.
+         * Use with caution as some entities automatically register feeds; this will remove those feeds as well.
+         * @return True if any feeds existed at this entity; false otherwise
+         */
+        boolean removeAllFeeds();
+    }
 }

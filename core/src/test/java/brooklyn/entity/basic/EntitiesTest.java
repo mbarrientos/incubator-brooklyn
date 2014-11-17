@@ -70,7 +70,7 @@ public class EntitiesTest extends BrooklynAppUnitTestSupport {
     @Test
     public void testAttributeSupplierUsingTuple() throws Exception {
         entity.setAttribute(TestEntity.NAME, "myname");
-        assertEquals(Entities.attributeSupplier(new EntityAndAttribute<String>(entity, TestEntity.NAME)).get(), "myname");
+        assertEquals(Entities.attributeSupplier(EntityAndAttribute.supplier(entity, TestEntity.NAME)).get(), "myname");
     }
     
     @Test(groups="Integration") // takes 1 second
@@ -106,21 +106,27 @@ public class EntitiesTest extends BrooklynAppUnitTestSupport {
     
     @Test
     public void testCreateGetContainsAndRemoveTags() throws Exception {
-        entity.addTag("foo");
-        entity.addTag(app);
+        entity = app.createAndManageChild(EntitySpec.create(TestEntity.class)
+            .tag(2)
+            .addInitializer(EntityInitializers.addingTags("foo")));
         
-        Assert.assertTrue(entity.containsTag("foo"));
-        Assert.assertFalse(entity.containsTag("bar"));
+        entity.tags().addTag(app);
         
-        Assert.assertEquals(entity.getTags(), MutableSet.of(app, "foo"));
+        Assert.assertTrue(entity.tags().containsTag(app));
+        Assert.assertTrue(entity.tags().containsTag("foo"));
+        Assert.assertTrue(entity.tags().containsTag(2));
+        Assert.assertFalse(entity.tags().containsTag("bar"));
         
-        entity.removeTag("foo");
-        Assert.assertFalse(entity.containsTag("foo"));
+        Assert.assertEquals(entity.tags().getTags(), MutableSet.of(app, "foo", 2));
         
-        Assert.assertTrue(entity.containsTag(entity.getParent()));
-        Assert.assertFalse(entity.containsTag(entity));
+        entity.tags().removeTag("foo");
+        Assert.assertFalse(entity.tags().containsTag("foo"));
         
-        Assert.assertEquals(entity.getTags(), MutableSet.of(app));
+        Assert.assertTrue(entity.tags().containsTag(entity.getParent()));
+        Assert.assertFalse(entity.tags().containsTag(entity));
+        
+        entity.removeTag(2);
+        Assert.assertEquals(entity.tags().getTags(), MutableSet.of(app));
     }
-
+    
 }

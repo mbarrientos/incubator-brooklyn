@@ -35,12 +35,12 @@ public interface LocationManager {
      * @param spec
      */
     <T extends Location> T createLocation(LocationSpec<T> spec);
-    
+
     /**
      * Convenience (particularly for groovy code) to create a location.
      * Equivalent to {@code createLocation(LocationSpec.create(type).configure(config))}
      * 
-     * @see createLocation(LocationSpec)
+     * @see #createLocation(LocationSpec)
      */
     <T extends Location> T createLocation(Map<?,?> config, Class<T> type);
 
@@ -83,4 +83,5 @@ public interface LocationManager {
      * (though it may be logged so duplicate calls are best avoided).
      */
     void unmanage(Location loc);
+
 }

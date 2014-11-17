@@ -35,6 +35,7 @@ import brooklyn.entity.basic.Entities;
 import brooklyn.entity.proxying.EntitySpec;
 import brooklyn.entity.trait.Startable;
 import brooklyn.event.Sensor;
+import brooklyn.location.LocationSpec;
 import brooklyn.location.basic.SimulatedLocation;
 import brooklyn.management.EntityManager;
 import brooklyn.policy.PolicySpec;
@@ -60,7 +61,7 @@ public class MembershipTrackingPolicyTest extends BrooklynAppUnitTestSupport {
     @Override
     public void setUp() throws Exception {
         super.setUp();
-        loc = new SimulatedLocation();
+        loc = mgmt.getLocationManager().createLocation(LocationSpec.create(SimulatedLocation.class));
         entityManager = app.getManagementContext().getEntityManager();
         
         group = app.createAndManageChild(EntitySpec.create(BasicGroup.class)
@@ -137,6 +138,7 @@ public class MembershipTrackingPolicyTest extends BrooklynAppUnitTestSupport {
     public void testNotifiedOfExtraTrackedSensors() throws Exception {
         TestEntity e1 = createAndManageChildOf(group);
 
+        app.removeAllPolicies();
         RecordingMembershipTrackingPolicy policy2 = app.addPolicy(PolicySpec.create(RecordingMembershipTrackingPolicy.class)
                 .configure("group", group)
                 .configure("sensorsToTrack", ImmutableSet.of(TestEntity.NAME)));
@@ -163,31 +165,50 @@ public class MembershipTrackingPolicyTest extends BrooklynAppUnitTestSupport {
     public void testNotNotifiedOfExtraTrackedSensorsIfNonDuplicate() throws Exception {
         TestEntity e1 = createAndManageChildOf(group);
         
+        app.removeAllPolicies();
         RecordingMembershipTrackingPolicy nonDuplicateTrackingPolicy = app.addPolicy(PolicySpec.create(RecordingMembershipTrackingPolicy.class)
                 .configure(AbstractMembershipTrackingPolicy.SENSORS_TO_TRACK, ImmutableSet.<Sensor<?>>of(TestEntity.NAME))
                 .configure(AbstractMembershipTrackingPolicy.NOTIFY_ON_DUPLICATES, false)
                 .configure(AbstractMembershipTrackingPolicy.GROUP, group));
 
         e1.setAttribute(TestEntity.NAME, "myname");
-
         assertRecordsEventually(nonDuplicateTrackingPolicy, Record.newAdded(e1), Record.newChanged(e1));
         
         e1.setAttribute(TestEntity.NAME, "myname");
-        
         assertRecordsContinually(nonDuplicateTrackingPolicy, Record.newAdded(e1), Record.newChanged(e1));
         
         e1.setAttribute(TestEntity.NAME, "mynewname");
-        
         assertRecordsEventually(nonDuplicateTrackingPolicy, Record.newAdded(e1), Record.newChanged(e1), Record.newChanged(e1));
     }
 
-    // NOTIFY_ON_DUPLICATES==true is default
+    // NOTIFY_ON_DUPLICATES==false is default
+    @Test
+    public void testDefaultNotNotifiedOfExtraTrackedSensorsIfDuplicate() throws Exception {
+        TestEntity e1 = createAndManageChildOf(group);
+
+        app.removeAllPolicies();
+        RecordingMembershipTrackingPolicy nonDuplicateTrackingPolicy = app.addPolicy(PolicySpec.create(RecordingMembershipTrackingPolicy.class)
+                .configure(AbstractMembershipTrackingPolicy.SENSORS_TO_TRACK, ImmutableSet.<Sensor<?>>of(TestEntity.NAME))
+                .configure(AbstractMembershipTrackingPolicy.GROUP, group));
+
+        e1.setAttribute(TestEntity.NAME, "myname");
+        assertRecordsEventually(nonDuplicateTrackingPolicy, Record.newAdded(e1), Record.newChanged(e1));
+        
+        e1.setAttribute(TestEntity.NAME, "myname");
+        assertRecordsContinually(nonDuplicateTrackingPolicy, Record.newAdded(e1), Record.newChanged(e1));
+        
+        e1.setAttribute(TestEntity.NAME, "mynewname");
+        assertRecordsEventually(nonDuplicateTrackingPolicy, Record.newAdded(e1), Record.newChanged(e1), Record.newChanged(e1));
+    }
+
     @Test
     public void testNotifiedOfExtraTrackedSensorsIfDuplicate() throws Exception {
         TestEntity e1 = createAndManageChildOf(group);
-        
+
+        app.removeAllPolicies();
         RecordingMembershipTrackingPolicy nonDuplicateTrackingPolicy = app.addPolicy(PolicySpec.create(RecordingMembershipTrackingPolicy.class)
                 .configure(AbstractMembershipTrackingPolicy.SENSORS_TO_TRACK, ImmutableSet.<Sensor<?>>of(TestEntity.NAME))
+                .configure(AbstractMembershipTrackingPolicy.NOTIFY_ON_DUPLICATES, true)
                 .configure(AbstractMembershipTrackingPolicy.GROUP, group));
 
         e1.setAttribute(TestEntity.NAME, "myname");

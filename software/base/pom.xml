@@ -17,8 +17,7 @@
     specific language governing permissions and limitations
     under the License.
 -->
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-    xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <packaging>jar</packaging>
 
@@ -29,7 +28,7 @@
 		Base classes for Brooklyn software process entities
 	</description>
     <parent>
-        <groupId>io.brooklyn</groupId>
+        <groupId>org.apache.brooklyn</groupId>
         <artifactId>brooklyn-parent</artifactId>
         <version>0.7.0-SNAPSHOT</version>  <!-- BROOKLYN_VERSION -->
         <relativePath>../../pom.xml</relativePath>
@@ -37,51 +36,105 @@
 
     <dependencies>
         <dependency>
-            <groupId>io.brooklyn</groupId>
+            <groupId>org.apache.brooklyn</groupId>
             <artifactId>brooklyn-core</artifactId>
+            <version>${project.version}</version>
         </dependency>
         <dependency>
-            <groupId>io.brooklyn</groupId>
+            <groupId>org.apache.brooklyn</groupId>
             <artifactId>brooklyn-jmxmp-agent</artifactId>
-            <version>${brooklyn.version}</version>
+            <version>${project.version}</version>
         </dependency>
         <dependency>
-            <groupId>io.brooklyn</groupId>
+            <groupId>org.apache.brooklyn</groupId>
             <artifactId>brooklyn-jmxrmi-agent</artifactId>
-            <version>${brooklyn.version}</version>
+            <version>${project.version}</version>
         </dependency>
-
         <dependency>
-            <groupId>io.brooklyn</groupId>
+            <groupId>org.apache.brooklyn</groupId>
+            <artifactId>brooklyn-utils-common</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.brooklyn</groupId>
+            <artifactId>brooklyn-api</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.brooklyn</groupId>
+            <artifactId>brooklyn-utils-groovy</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.brooklyn</groupId>
             <artifactId>brooklyn-policy</artifactId>
+            <version>${project.version}</version>
         </dependency>
 
         <dependency>
             <groupId>org.freemarker</groupId>
             <artifactId>freemarker</artifactId>
-            <version>${freemarker.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.google.guava</groupId>
+            <artifactId>guava</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.google.code.findbugs</groupId>
+            <artifactId>jsr305</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.google.code.gson</groupId>
+            <artifactId>gson</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.codehaus.groovy</groupId>
+            <artifactId>groovy-all</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>commons-io</groupId>
+            <artifactId>commons-io</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.httpcomponents</groupId>
+            <artifactId>httpclient</artifactId>
         </dependency>
 
         <dependency>
-            <groupId>${project.groupId}</groupId>
+            <groupId>org.testng</groupId>
+            <artifactId>testng</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.brooklyn</groupId>
             <artifactId>brooklyn-test-support</artifactId>
+            <version>${project.version}</version>
             <scope>test</scope>
         </dependency>
         <!-- bring in jclouds for testing -->
         <dependency>
-            <groupId>io.brooklyn</groupId>
+            <groupId>org.apache.brooklyn</groupId>
             <artifactId>brooklyn-locations-jclouds</artifactId>
-            <version>${brooklyn.version}</version>
+            <version>${project.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>${jclouds.groupId}</groupId>
+            <artifactId>jclouds-core</artifactId>
+            <version>${jclouds.version}</version>
             <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>org.mockito</groupId>
             <artifactId>mockito-core</artifactId>
-            <version>${mockito.version}</version>
             <scope>test</scope>
         </dependency>
         <dependency>
-            <groupId>io.brooklyn</groupId>
+            <groupId>org.apache.brooklyn</groupId>
             <artifactId>brooklyn-core</artifactId>
             <version>${project.version}</version>
             <classifier>tests</classifier>
@@ -90,7 +143,6 @@
         <dependency>
             <groupId>mx4j</groupId>
             <artifactId>mx4j-tools</artifactId>
-            <version>${mx4j.version}</version>
             <scope>test</scope>
         </dependency>
     </dependencies>

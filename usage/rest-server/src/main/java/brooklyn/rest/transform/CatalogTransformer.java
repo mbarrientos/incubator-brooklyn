@@ -24,13 +24,13 @@ import java.util.Set;
 
 import org.slf4j.LoggerFactory;
 
+import brooklyn.basic.BrooklynTypes;
 import brooklyn.catalog.CatalogItem;
 import brooklyn.config.ConfigKey;
 import brooklyn.entity.Effector;
 import brooklyn.entity.Entity;
 import brooklyn.entity.EntityType;
 import brooklyn.entity.basic.EntityDynamicType;
-import brooklyn.entity.basic.EntityTypes;
 import brooklyn.entity.proxying.EntitySpec;
 import brooklyn.event.Sensor;
 import brooklyn.policy.Policy;
@@ -42,6 +42,7 @@ import brooklyn.rest.domain.EffectorSummary;
 import brooklyn.rest.domain.EntityConfigSummary;
 import brooklyn.rest.domain.PolicyConfigSummary;
 import brooklyn.rest.domain.SensorSummary;
+import brooklyn.rest.domain.SummaryComparators;
 import brooklyn.rest.util.BrooklynRestResourceUtils;
 import brooklyn.util.collections.MutableMap;
 
@@ -55,18 +56,21 @@ public class CatalogTransformer {
     
     public static CatalogEntitySummary catalogEntitySummary(BrooklynRestResourceUtils b, CatalogItem<? extends Entity,EntitySpec<?>> item) {
         EntitySpec<?> spec = b.getCatalog().createSpec(item);
-        EntityDynamicType typeMap = EntityTypes.getDefinedEntityType(spec.getType());
+        EntityDynamicType typeMap = BrooklynTypes.getDefinedEntityType(spec.getType());
         EntityType type = typeMap.getSnapshot();
 
-        Set<EntityConfigSummary> config = Sets.newLinkedHashSet();
-        Set<SensorSummary> sensors = Sets.newLinkedHashSet();
-        Set<EffectorSummary> effectors = Sets.newLinkedHashSet();
+        Set<EntityConfigSummary> config = Sets.newTreeSet(SummaryComparators.nameComparator());
+        Set<SensorSummary> sensors = Sets.newTreeSet(SummaryComparators.nameComparator());
+        Set<EffectorSummary> effectors = Sets.newTreeSet(SummaryComparators.nameComparator());
 
-        for (ConfigKey<?> x: type.getConfigKeys()) config.add(EntityTransformer.entityConfigSummary(x, typeMap.getConfigKeyField(x.getName())));
-        for (Sensor<?> x: type.getSensors()) sensors.add(SensorTransformer.sensorSummaryForCatalog(x));
-        for (Effector<?> x: type.getEffectors()) effectors.add(EffectorTransformer.effectorSummaryForCatalog(x));
+        for (ConfigKey<?> x: type.getConfigKeys())
+            config.add(EntityTransformer.entityConfigSummary(x, typeMap.getConfigKeyField(x.getName())));
+        for (Sensor<?> x: type.getSensors())
+            sensors.add(SensorTransformer.sensorSummaryForCatalog(x));
+        for (Effector<?> x: type.getEffectors())
+            effectors.add(EffectorTransformer.effectorSummaryForCatalog(x));
 
-        return new CatalogEntitySummary(item.getId(), item.getName(), 
+        return new CatalogEntitySummary(item.getId(), item.getName(),
             item.getRegisteredTypeName(), item.getJavaType(), 
             item.getRegisteredTypeName(),
             item.getPlanYaml(),
@@ -85,7 +89,8 @@ public class CatalogTransformer {
 
     public static CatalogPolicySummary catalogPolicySummary(BrooklynRestResourceUtils b, CatalogItem<? extends Policy,PolicySpec<?>> item) {
         Set<PolicyConfigSummary> config = ImmutableSet.of();
-        return new CatalogPolicySummary(item.getId(), item.getName(), item.getJavaType(),
+        return new CatalogPolicySummary(item.getId(), item.getName(), item.getRegisteredTypeName(),
+                item.getPlanYaml(),
                 item.getDescription(), tidyIconLink(b, item, item.getIconUrl()), config,
                 makeLinks(item));
     }

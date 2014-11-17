@@ -18,7 +18,10 @@
  */
 package brooklyn.entity.rebind;
 
+import brooklyn.basic.BrooklynObject;
+import brooklyn.catalog.CatalogItem;
 import brooklyn.entity.Entity;
+import brooklyn.entity.Feed;
 import brooklyn.entity.basic.EntityLocal;
 import brooklyn.location.Location;
 import brooklyn.policy.Enricher;
@@ -28,21 +31,21 @@ import com.google.common.annotations.Beta;
 
 /**
  * Handler called on all exceptions to do with rebind.
+ * A handler instance is linked to a single rebind pass;
+ * it should not be invoked after {@link #onDone()}.
+ * <p>
+ * {@link #onStart()} must be invoked before the run.
+ * {@link #onDone()} must be invoked after a successful run, and it may throw.
+ * <p>
+ * Implementations may propagate errors or may catch them until {@link #onDone()} is invoked,
+ * and that may throw or report elsewhere, as appropriate.
  * 
  * @author aled
  */
 @Beta
 public interface RebindExceptionHandler {
 
-    void onLoadBrooklynMementoFailed(String msg, Exception e);
-    
-    void onLoadLocationMementoFailed(String msg, Exception e);
-
-    void onLoadEntityMementoFailed(String msg, Exception e);
-    
-    void onLoadPolicyMementoFailed(String msg, Exception e);
-    
-    void onLoadEnricherMementoFailed(String msg, Exception e);
+    void onLoadMementoFailed(BrooklynObjectType type, String msg, Exception e);
     
     /**
      * @return the entity to use in place of the missing one, or null (if hasn't thrown an exception)
@@ -64,43 +67,37 @@ public interface RebindExceptionHandler {
      */
     Enricher onDanglingEnricherRef(String id);
 
-    void onCreateLocationFailed(String locId, String locType, Exception e);
-
-    void onCreateEntityFailed(String entityId, String entityType, Exception e);
-
-    void onCreatePolicyFailed(String id, String type, Exception e);
-
-    void onCreateEnricherFailed(String id, String type, Exception e);
-
-    void onLocationNotFound(String id);
+    /**
+     * @return the feed to use in place of the missing one, or null (if hasn't thrown an exception)
+     */
+    Feed onDanglingFeedRef(String id);
     
-    void onEntityNotFound(String id);
-    
-    void onPolicyNotFound(String id);
+    /**
+     * @return the catalog item to use in place of the missing one
+     */
+    CatalogItem<?, ?> onDanglingCatalogItemRef(String id);
 
-    void onPolicyNotFound(String id, String context);
+    void onCreateFailed(BrooklynObjectType type, String id, String instanceType, Exception e);
 
-    void onEnricherNotFound(String id);
+    void onNotFound(BrooklynObjectType type, String id);
 
-    void onEnricherNotFound(String id, String context);
-
-    void onRebindEntityFailed(Entity entity, Exception e);
-
-    void onRebindLocationFailed(Location location, Exception e);
-
-    void onRebindPolicyFailed(Policy policy, Exception e);
-
-    void onRebindEnricherFailed(Enricher enricher, Exception e);
+    void onRebindFailed(BrooklynObjectType type, BrooklynObject instance, Exception e);
 
     void onAddPolicyFailed(EntityLocal entity, Policy policy, Exception e);
 
     void onAddEnricherFailed(EntityLocal entity, Enricher enricher, Exception e);
 
-    void onManageLocationFailed(Location location, Exception e);
+    void onAddFeedFailed(EntityLocal entity, Feed feed, Exception e);
 
-    void onManageEntityFailed(Entity entity, Exception e);
+    void onManageFailed(BrooklynObjectType type, BrooklynObject instance, Exception e);
 
-    void onDone();
-    
+    /** invoked for any high-level, unexpected, or otherwise uncaught failure;
+     * may be invoked on catching above errors */
     RuntimeException onFailed(Exception e);
+
+    /** invoked before the rebind pass */
+    void onStart();
+    
+    /** invoked after the complete rebind pass, always on success and possibly on failure */
+    void onDone();
 }

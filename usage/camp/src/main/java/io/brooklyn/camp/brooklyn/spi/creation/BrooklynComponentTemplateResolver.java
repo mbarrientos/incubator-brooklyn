@@ -19,6 +19,7 @@
 package io.brooklyn.camp.brooklyn.spi.creation;
 
 import io.brooklyn.camp.brooklyn.BrooklynCampConstants;
+import io.brooklyn.camp.brooklyn.spi.dsl.methods.BrooklynDslCommon;
 import io.brooklyn.camp.spi.AbstractResource;
 import io.brooklyn.camp.spi.ApplicationComponentTemplate;
 import io.brooklyn.camp.spi.AssemblyTemplate;
@@ -32,12 +33,16 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import javax.annotation.Nullable;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import brooklyn.catalog.CatalogItem;
+import brooklyn.catalog.internal.CatalogUtils;
 import brooklyn.config.ConfigKey;
 import brooklyn.entity.Application;
 import brooklyn.entity.Entity;
-import brooklyn.entity.basic.AbstractApplication;
 import brooklyn.entity.basic.AbstractEntity;
+import brooklyn.entity.basic.BrooklynTags;
 import brooklyn.entity.basic.ConfigKeys;
 import brooklyn.entity.basic.EntityInternal;
 import brooklyn.entity.basic.VanillaSoftwareProcess;
@@ -47,6 +52,7 @@ import brooklyn.entity.proxying.EntitySpec;
 import brooklyn.entity.proxying.InternalEntityFactory;
 import brooklyn.location.Location;
 import brooklyn.management.ManagementContext;
+import brooklyn.management.ManagementContextInjectable;
 import brooklyn.management.classloading.BrooklynClassLoadingContext;
 import brooklyn.management.classloading.BrooklynClassLoadingContextSequential;
 import brooklyn.management.internal.ManagementContextInternal;
@@ -61,17 +67,20 @@ import brooklyn.util.javalang.Reflections;
 import brooklyn.util.text.Strings;
 
 import com.google.common.base.Function;
-import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Maps;
 
-/** this converts PlatformComponentTemplate instances whose type is prefixed "brooklyn:"
- * to Brooklyn EntitySpec instances.
+/**
+ * This converts {@link PlatformComponentTemplate} instances whose type is prefixed {@code brooklyn:}
+ * to Brooklyn {@link EntitySpec} instances.
+ * <p>
  * but TODO this should probably be done by {@link BrooklynEntityMatcher} 
  * so we have a spec by the time we come to instantiate.
  * (currently privileges "brooklyn.*" key names are checked in both places!)  
  */
 public class BrooklynComponentTemplateResolver {
+
+    private static final Logger log = LoggerFactory.getLogger(BrooklynDslCommon.class);
 
     BrooklynClassLoadingContext loader;
     final ManagementContext mgmt;
@@ -95,7 +104,7 @@ public class BrooklynComponentTemplateResolver {
             return null;
         }
 
-        public static BrooklynComponentTemplateResolver newInstance(BrooklynClassLoadingContext loader, Map<String, Object> childAttrs) {
+        public static BrooklynComponentTemplateResolver newInstance(BrooklynClassLoadingContext loader, Map<String, ?> childAttrs) {
             return newInstance(loader, ConfigBag.newInstance(childAttrs), null);
         }
 
@@ -158,7 +167,7 @@ public class BrooklynComponentTemplateResolver {
         return type != null && (type.toLowerCase().startsWith("java:") || type.toLowerCase().startsWith("brooklyn:java:"));
     }
 
-    protected String getCatalogIdOrJavaType() {
+    protected String getBrooklynType() {
         String type = getDeclaredType();
         type = Strings.removeFromStart(type, "brooklyn:", "java:");
         if (type == null) return null;
@@ -179,7 +188,7 @@ public class BrooklynComponentTemplateResolver {
      */
     @Nullable
     public CatalogItem<Entity,EntitySpec<?>> getCatalogItem() {
-        String type = getCatalogIdOrJavaType();
+        String type = getBrooklynType();
         if (type != null) {
             return loader.getManagementContext().getCatalog().getCatalogItem(Entity.class, type);
         } else {
@@ -190,24 +199,27 @@ public class BrooklynComponentTemplateResolver {
     public boolean canResolve() {
         if (getCatalogItem()!=null) 
             return true;
-        if (loader.tryLoadClass(getCatalogIdOrJavaType(), Entity.class).isPresent())
+        if (loader.tryLoadClass(getBrooklynType(), Entity.class).isPresent())
             return true;
         return false;
     }
 
     /** returns the entity class, if needed in contexts which scan its statics for example */
     public Class<? extends Entity> loadEntityClass() {
-        return tryLoadEntityClass().get();
+        Maybe<Class<? extends Entity>> result = tryLoadEntityClass();
+        if (result.isAbsent())
+            throw new IllegalStateException("Could not find "+getBrooklynType(), ((Maybe.Absent<?>)result).getException());
+        return result.get();
     }
     
     /** tries to load the Java entity class */
     public Maybe<Class<? extends Entity>> tryLoadEntityClass() {
         CatalogItem<Entity, EntitySpec<?>> item = getCatalogItem();
-        String typeName = getCatalogIdOrJavaType();
+        String typeName = getBrooklynType();
         
         if (item!=null) {
             // add additional bundles
-            loader = new BrooklynClassLoadingContextSequential(mgmt, item.newClassLoadingContext(mgmt), loader);
+            loader = new BrooklynClassLoadingContextSequential(mgmt, CatalogUtils.newClassLoadingContext(mgmt, item), loader);
             
             if (item.getJavaType() != null) {
                 typeName = item.getJavaType();
@@ -218,11 +230,18 @@ public class BrooklynComponentTemplateResolver {
     }
 
     /** resolves the spec, updating the loader if a catalog item is loaded */
-    @SuppressWarnings("unchecked")
     public <T extends Entity> EntitySpec<T> resolveSpec() {
         if (alreadyBuilt.getAndSet(true))
             throw new IllegalStateException("Spec can only be used once: "+this);
+        
+        EntitySpec<T> spec = createSpec();
+        populateSpec(spec);
+        
+        return spec;
+    }
 
+    @SuppressWarnings({ "unchecked", "rawtypes" })
+    private <T extends Entity> EntitySpec<T> createSpec() {
         // ensure loader is updated
         getCatalogItem();
         
@@ -238,7 +257,16 @@ public class BrooklynComponentTemplateResolver {
             List<Class<?>> additionalInterfaceClazzes = Reflections.getAllInterfaces(type);
             spec = EntitySpec.create(interfaceclazz).impl(type).additionalInterfaces(additionalInterfaceClazzes);
         }
+        spec.catalogItemId(CatalogUtils.getCatalogItemIdFromLoader(loader));
+        if (template.isPresent() && template.get().getSourceCode()!=null)
+            spec.tag(BrooklynTags.newYamlSpecTag(template.get().getSourceCode()));
 
+        return spec;
+    }
+
+    //called from BrooklynAssemblyTemplateInstantiator as well
+    @SuppressWarnings("unchecked")
+    protected <T extends Entity> void populateSpec(EntitySpec<T> spec) {
         String name, templateId=null, planId=null;
         if (template.isPresent()) {
             name = template.get().getName();
@@ -249,7 +277,23 @@ public class BrooklynComponentTemplateResolver {
         planId = (String)attrs.getStringKey("id");
         if (planId==null)
             planId = (String) attrs.getStringKey(BrooklynCampConstants.PLAN_ID_FLAG);
-        
+
+        Object childrenObj = attrs.getStringKey("brooklyn.children");
+        if (childrenObj != null) {
+            Set<String> encounteredCatalogTypes = MutableSet.of();
+
+            Iterable<Map<String,?>> children = (Iterable<Map<String,?>>)childrenObj;
+            for (Map<String,?> childAttrs : children) {
+                BrooklynComponentTemplateResolver entityResolver = BrooklynComponentTemplateResolver.Factory.newInstance(loader, childAttrs);
+                BrooklynAssemblyTemplateInstantiator instantiator = new BrooklynAssemblyTemplateInstantiator();
+                // TODO: Creating a new set of encounteredCatalogTypes prevents the recursive definition check in
+                // BrooklynAssemblyTemplateInstantiator.resolveSpec from correctly determining if a YAML entity is
+                // defined recursively. However, the number of overrides of newInstance, and the number of places
+                // calling populateSpec make it difficult to pass encounteredCatalogTypes in as a parameter
+                EntitySpec<? extends Entity> childSpec = instantiator.resolveSpec(entityResolver, encounteredCatalogTypes);
+                spec.child(childSpec);
+            }
+        }
         if (!Strings.isBlank(name))
             spec.displayName(name);
         if (templateId != null)
@@ -262,8 +306,6 @@ public class BrooklynComponentTemplateResolver {
             spec.locations(childLocations);
         
         decorateSpec(spec);
-        
-        return spec;
     }
 
     protected <T extends Entity> void decorateSpec(EntitySpec<T> spec) {
@@ -282,22 +324,11 @@ public class BrooklynComponentTemplateResolver {
         Class<? extends T> entityImpl = (spec.getImplementation() != null) ? spec.getImplementation() : mgmt.getEntityManager().getEntityTypeRegistry().getImplementedBy(spec.getType());
         InternalEntityFactory entityFactory = ((ManagementContextInternal)mgmt).getEntityFactory();
         T entity = entityFactory.constructEntity(entityImpl, spec);
-        if (entity instanceof AbstractApplication) {
-            FlagUtils.setFieldsFromFlags(ImmutableMap.of("mgmt", mgmt), entity);
-        }
 
-        // TODO Some of the code below could go into constructEntity?
-        if (spec.getId() != null) {
-            FlagUtils.setFieldsFromFlags(ImmutableMap.of("id", spec.getId()), entity);
-        }
         String planId = (String)spec.getConfig().get(BrooklynCampConstants.PLAN_ID.getConfigKey());
         if (planId != null) {
             ((EntityInternal)entity).setConfig(BrooklynCampConstants.PLAN_ID, planId);
         }
-        ((ManagementContextInternal)mgmt).prePreManage(entity);
-        ((AbstractEntity)entity).setManagementContext((ManagementContextInternal)mgmt);
-        
-        ((AbstractEntity)entity).setProxy(entityFactory.createEntityProxy(spec, entity));
         
         if (spec.getLocations().size() > 0) {
             ((AbstractEntity)entity).addLocations(spec.getLocations());
@@ -308,10 +339,22 @@ public class BrooklynComponentTemplateResolver {
         return entity;
     }
 
-    @SuppressWarnings("unchecked")
+    @SuppressWarnings({ "unchecked", "rawtypes" })
     private void configureEntityConfig(EntitySpec<?> spec) {
         ConfigBag bag = ConfigBag.newInstance((Map<Object, Object>) attrs.getStringKey("brooklyn.config"));
         
+        // first take *recognised* flags and config keys from the top-level, and put them in the bag (of brooklyn.config)
+        // (for component templates this will have been done already by BrooklynEntityMatcher, but for specs it is needed here)
+        ConfigBag bagFlags = ConfigBag.newInstanceCopying(attrs);
+        List<FlagConfigKeyAndValueRecord> topLevelApparentConfig = FlagUtils.findAllFlagsAndConfigKeys(null, spec.getType(), bagFlags);
+        for (FlagConfigKeyAndValueRecord r: topLevelApparentConfig) {
+            if (r.getConfigKeyMaybeValue().isPresent())
+                bag.putIfAbsent((ConfigKey)r.getConfigKey(), r.getConfigKeyMaybeValue().get());
+            if (r.getFlagMaybeValue().isPresent())
+                bag.putAsStringKeyIfAbsent(r.getFlagName(), r.getFlagMaybeValue().get());
+        }
+
+        // now set configuration for all the items in the bag
         List<FlagConfigKeyAndValueRecord> records = FlagUtils.findAllFlagsAndConfigKeys(null, spec.getType(), bag);
         Set<String> keyNamesUsed = new LinkedHashSet<String>();
         for (FlagConfigKeyAndValueRecord r: records) {
@@ -381,12 +424,17 @@ public class BrooklynComponentTemplateResolver {
                 specConfig.setSpecConfiguration(resolvedConfig);
                 return Factory.newInstance(loader, specConfig.getSpecConfiguration()).resolveSpec();
             }
+            if (flag instanceof ManagementContextInjectable) {
+                if (log.isDebugEnabled()) { log.debug("Injecting Brooklyn management context info object: {}", flag); }
+                ((ManagementContextInjectable) flag).injectManagementContext(loader.getManagementContext());
+            }
+
             return flag;
         }
     }
 
     @SuppressWarnings("unchecked")
-    public List<Map<String, Object>> getChildren(Map<String, Object> attrs) {
+    protected List<Map<String, Object>> getChildren(Map<String, Object> attrs) {
         if (attrs==null) return null;
         return (List<Map<String, Object>>) attrs.get("brooklyn.children");
     }

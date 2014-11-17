@@ -18,16 +18,18 @@
  */
 package brooklyn.entity.machine;
 
+import brooklyn.catalog.Catalog;
 import brooklyn.entity.annotation.Effector;
 import brooklyn.entity.annotation.EffectorParam;
+import brooklyn.entity.basic.EmptySoftwareProcess;
 import brooklyn.entity.basic.MethodEffector;
-import brooklyn.entity.basic.SoftwareProcess;
 import brooklyn.entity.proxying.ImplementedBy;
 import brooklyn.event.AttributeSensor;
 import brooklyn.util.time.Duration;
 
+@Catalog(name="Machine Entity", description="Represents a machine, providing metrics about it (e.g. obtained from ssh)")
 @ImplementedBy(MachineEntityImpl.class)
-public interface MachineEntity extends SoftwareProcess {
+public interface MachineEntity extends EmptySoftwareProcess {
 
     AttributeSensor<Duration> UPTIME = MachineAttributes.UPTIME;
     AttributeSensor<Double> LOAD_AVERAGE = MachineAttributes.LOAD_AVERAGE;

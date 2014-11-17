@@ -42,11 +42,11 @@ import brooklyn.util.config.ConfigBag;
 import brooklyn.util.text.Identifiers;
 import brooklyn.util.time.Time;
 
-import com.beust.jcommander.internal.Lists;
 import com.google.common.base.Stopwatch;
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Lists;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ListeningExecutorService;
@@ -293,7 +293,7 @@ public abstract class ShellToolAbstractTest {
         try {
             for (int i = 0; i < numCommands; i++) {
                 long delay = (long) (Math.random() * staggeredDelayBeforeStart);
-                if (i > 0 && delay >= 0) Time.sleep(delay);
+                if (i > 0) Time.sleep(delay);
                 
                 futures.add(executor.submit(new Runnable() {
                         public void run() {

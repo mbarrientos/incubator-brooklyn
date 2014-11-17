@@ -123,11 +123,11 @@ public class DerbyDatabase extends SoftwareProcessImpl implements Database, Uses
 
     @Override
     public void preStop() {
-    	super.preStop();
+        super.preStop();
         for (DerbySchema schema : schemas.values()) {
             schema.destroy();
         }
-        if (jmxHelper != null) jmxHelper.disconnect();
+        if (jmxHelper != null) jmxHelper.terminate();
     }
 
     public void createSchema(String name) {
@@ -148,7 +148,7 @@ public class DerbyDatabase extends SoftwareProcessImpl implements Database, Uses
     
     public void addSchema(Schema schema) {
         schemas.put(schema.getName(), (DerbySchema) schema);
-	}
+    }
     
     public void removeSchema(String schemaName) {
         schemas.remove(schemaName);

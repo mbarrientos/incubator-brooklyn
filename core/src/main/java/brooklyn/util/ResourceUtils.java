@@ -18,23 +18,33 @@
  */
 package brooklyn.util;
 
+import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.UnsupportedEncodingException;
 import java.net.InetAddress;
 import java.net.JarURLConnection;
 import java.net.MalformedURLException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
+import java.net.URLDecoder;
 import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Properties;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.apache.http.HttpEntity;
+import org.apache.http.HttpResponse;
+import org.apache.http.auth.Credentials;
+import org.apache.http.auth.UsernamePasswordCredentials;
+import org.apache.http.client.HttpClient;
+import org.apache.http.client.methods.HttpGet;
+import org.apache.http.util.EntityUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -45,7 +55,10 @@ import brooklyn.management.classloading.BrooklynClassLoadingContext;
 import brooklyn.management.classloading.JavaBrooklynClassLoadingContext;
 import brooklyn.util.collections.MutableMap;
 import brooklyn.util.exceptions.Exceptions;
+import brooklyn.util.http.HttpTool;
+import brooklyn.util.http.HttpTool.HttpClientBuilder;
 import brooklyn.util.javalang.Threads;
+import brooklyn.util.net.Networking;
 import brooklyn.util.net.Urls;
 import brooklyn.util.os.Os;
 import brooklyn.util.stream.Streams;
@@ -65,6 +78,8 @@ public class ResourceUtils {
     private BrooklynClassLoadingContext loader = null;
     private String context = null;
     private Object contextObject = null;
+    
+    static { Networking.init(); }
     
     /**
      * Creates a {@link ResourceUtils} object with a specific class loader and context.
@@ -131,7 +146,7 @@ public class ResourceUtils {
     }
 
     public ResourceUtils(ClassLoader loader, Object contextObject, String contextMessage) {
-        this(new JavaBrooklynClassLoadingContext(null, loader), contextObject, contextMessage);
+        this(JavaBrooklynClassLoadingContext.create(loader), contextObject, contextMessage);
     }
     
     public ResourceUtils(BrooklynClassLoadingContext loader, Object contextObject, String contextMessage) {
@@ -172,7 +187,7 @@ public class ResourceUtils {
         ManagementContext mgmt = null;
         BrooklynClassLoadingContext bl = BrooklynLoaderTracker.getLoader();
         if (bl!=null) mgmt = bl.getManagementContext();
-        return new JavaBrooklynClassLoadingContext(mgmt, loader);
+        return JavaBrooklynClassLoadingContext.create(mgmt, loader);
     }
     
     public BrooklynClassLoadingContext getLoader() {
@@ -221,7 +236,11 @@ public class ResourceUtils {
                 if ("data".equals(protocol)) {
                     return new DataUriSchemeParser(url).lax().parse().getDataAsInputStream();
                 }
-                
+
+                if ("http".equals(protocol) || "https".equals(protocol)) {
+                    return getResourceViaHttp(url);
+                }
+
                 return new URL(url).openStream();
             }
 
@@ -304,7 +323,7 @@ public class ResourceUtils {
         } catch (MalformedURLException e) {
             throw Exceptions.propagate(e);
         }
-        if (!urlOut.equals(in) && log.isDebugEnabled()) {
+        if (!urlOut.equals(url) && log.isDebugEnabled()) {
             log.debug("quietly changing " + url + " to " + urlOut);
         }
         return urlOut;
@@ -385,6 +404,60 @@ public class ResourceUtils {
         }
     }
     
+    //For HTTP(S) targets use HttpClient so
+    //we can do authentication
+    private InputStream getResourceViaHttp(String resource) throws IOException {
+        URI uri = URI.create(resource);
+        HttpClientBuilder builder = HttpTool.httpClientBuilder()
+                .laxRedirect(true)
+                .uri(uri);
+        Credentials credentials = getUrlCredentials(uri.getRawUserInfo());
+        if (credentials != null) {
+            builder.credentials(credentials);
+        }
+        HttpClient client = builder.build();
+        HttpResponse result = client.execute(new HttpGet(resource));
+        int statusCode = result.getStatusLine().getStatusCode();
+        if (HttpTool.isStatusCodeHealthy(statusCode)) {
+            HttpEntity entity = result.getEntity();
+            if (entity != null) {
+                return entity.getContent();
+            } else {
+                return new ByteArrayInputStream(new byte[0]);
+            }
+        } else {
+            EntityUtils.consume(result.getEntity());
+            throw new IllegalStateException("Invalid response invoking " + resource + ": response code " + statusCode);
+        }
+    }
+
+    private Credentials getUrlCredentials(String userInfo) {
+        if (userInfo != null) {
+            String[] arr = userInfo.split(":");
+            String username;
+            String password = null;
+            if (arr.length == 1) {
+                username = urlDecode(arr[0]);
+            } else if (arr.length == 2) {
+                username = urlDecode(arr[0]);
+                password = urlDecode(arr[1]);
+            } else {
+                return null;
+            }
+            return new UsernamePasswordCredentials(username, password);
+        } else {
+            return null;
+        }
+    }
+
+    private String urlDecode(String str) {
+        try {
+            return URLDecoder.decode(str, "UTF-8");
+        } catch (UnsupportedEncodingException e) {
+            throw Exceptions.propagate(e);
+        }
+    }
+
     /** takes {@link #getResourceFromUrl(String)} and reads fully, into a string */
     public String getResourceAsString(String url) {
         try {
@@ -440,9 +513,27 @@ public class ResourceUtils {
     
     public String getClassLoaderDir(String resourceInThatDir) {
         resourceInThatDir = Strings.removeFromStart(resourceInThatDir, "/");
-        URL url = getLoader().getResource(resourceInThatDir);
-        if (url==null) throw new NoSuchElementException("Resource ("+resourceInThatDir+") not found");
+        URL resourceUrl = getLoader().getResource(resourceInThatDir);
+        if (resourceUrl==null) throw new NoSuchElementException("Resource ("+resourceInThatDir+") not found");
 
+        URL containerUrl = getContainerUrl(resourceUrl, resourceInThatDir);
+
+        if (!"file".equals(containerUrl.getProtocol())) throw new IllegalStateException("Resource ("+resourceInThatDir+") not on file system (at "+containerUrl+")");
+
+        //convert from file: URL to File
+        File file;
+        try {
+            file = new File(containerUrl.toURI());
+        } catch (URISyntaxException e) {
+            throw new IllegalStateException("Resource ("+resourceInThatDir+") found at invalid URI (" + containerUrl + ")", e);
+        }
+        
+        if (!file.exists()) throw new IllegalStateException("Context class url substring ("+containerUrl+") not found on filesystem");
+        return file.getPath();
+        
+    }
+
+    public static URL getContainerUrl(URL url, String resourceInThatDir) {
         //Switching from manual parsing of jar: and file: URLs to java provided functionality.
         //The old code was breaking on any Windows path and instead of fixing it, using
         //the provided Java APIs seemed like the better option since they are already tested
@@ -472,20 +563,7 @@ public class ResourceUtils {
                 throw new IllegalStateException("Resource ("+resourceInThatDir+") found at invalid URL parent (" + parent + ")", e);
             }
         }
-        
-        if (!"file".equals(url.getProtocol())) throw new IllegalStateException("Resource ("+resourceInThatDir+") not on file system (at "+url+")");
-
-        //convert from file: URL to File
-        File file;
-        try {
-            file = new File(url.toURI());
-        } catch (URISyntaxException e) {
-            throw new IllegalStateException("Resource ("+resourceInThatDir+") found at invalid URI (" + url + ")", e);
-        }
-        
-        if (!file.exists()) throw new IllegalStateException("Context class url substring ("+url+") not found on filesystem");
-        return file.getPath();
-        
+        return url;
     }
     
     /** @deprecated since 0.7.0 use {@link Streams#readFullyString(InputStream) */ @Deprecated

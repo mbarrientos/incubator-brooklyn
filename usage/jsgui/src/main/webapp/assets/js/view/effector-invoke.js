@@ -26,7 +26,8 @@ define([
     "text!tpl/app-add-wizard/deploy-location-row.html", 
     "text!tpl/app-add-wizard/deploy-location-option.html",
     "text!tpl/apps/param.html",
-    "text!tpl/apps/param-list.html"
+    "text!tpl/apps/param-list.html",
+    "bootstrap"
 ], function (_, $, Backbone, Location, EffectorModalHtml, 
         DeployLocationRowHtml, DeployLocationOptionHtml, ParamHtml, ParamListHtml) {
 
@@ -62,7 +63,7 @@ define([
             this.$el.html(this.template({
                 name:this.model.get("name"),
                 entityName:this.options.entity.get("name"),
-                description:this.model.get("description")?this.model.get("description"):"",
+                description:this.model.get("description")?this.model.get("description"):""
             }))
             // do we have parameters to render?
             if (params.length !== 0) {
@@ -114,7 +115,10 @@ define([
                 var value = $(this).find(".param-value").attr('id') == 'selector-container' ? 
                         $(this).find(".param-value option:selected").attr("value") : 
                         $(this).find(".param-value").val();
-                parameters[key] = value;
+                //treat empty field as null value
+                if (value !== '') {
+                    parameters[key] = value;
+                }
             })
             return parameters
         },

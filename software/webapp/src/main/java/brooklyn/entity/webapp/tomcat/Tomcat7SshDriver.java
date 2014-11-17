@@ -24,8 +24,9 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 
+import com.google.common.collect.Iterables;
+
 import brooklyn.entity.basic.Entities;
-import brooklyn.entity.drivers.downloads.DownloadResolver;
 import brooklyn.entity.webapp.JavaWebAppSshDriver;
 import brooklyn.location.basic.SshMachineLocation;
 import brooklyn.util.collections.MutableList;
@@ -52,20 +53,31 @@ public class Tomcat7SshDriver extends JavaWebAppSshDriver implements Tomcat7Driv
     protected Integer getShutdownPort() {
         return entity.getAttribute(TomcatServerImpl.SHUTDOWN_PORT);
     }
+    
+    @Override
+    public void preInstall() {
+        resolver = Entities.newDownloader(this);
+        setExpandedInstallDir(Os.mergePaths(getInstallDir(), resolver.getUnpackedDirectoryName("apache-tomcat-"+getVersion())));
+    }
 
     @Override
     public void install() {
-        DownloadResolver resolver = Entities.newDownloader(this);
         List<String> urls = resolver.getTargets();
         String saveAs = resolver.getFilename();
-        setExpandedInstallDir(getInstallDir()+"/"+resolver.getUnpackedDirectoryName("apache-tomcat-"+getVersion()));
 
         List<String> commands = new LinkedList<String>();
         commands.addAll(BashCommands.commandsToDownloadUrlsAs(urls, saveAs));
         commands.add(BashCommands.INSTALL_TAR);
-        commands.add(format("tar xvzf %s",saveAs));
+        commands.add(format("tar xvzf %s", saveAs));
 
+        if (getEnabledProtocols().size()!=1) {
+            log.warn("TomcatServer only supports one protocol, http; ignoring requested protocols "+getEnabledProtocols());
+        } else if (!"http".equalsIgnoreCase(Iterables.getOnlyElement(getEnabledProtocols()))) {
+            log.warn("TomcatServer only supports one protocol, http; ignoring requested protocol "+getEnabledProtocols());
+        }
+        
         newScript(INSTALLING)
+                .environmentVariablesReset()
                 .body.append(commands)
                 .execute();
     }
@@ -87,7 +99,7 @@ public class Tomcat7SshDriver extends JavaWebAppSshDriver implements Tomcat7Driv
 
     @Override
     public void launch() {
-        Map ports = MutableMap.of("httpPort", getHttpPort(), "shutdownPort", getShutdownPort());
+        Map<String, Integer> ports = MutableMap.of("httpPort", getHttpPort(), "shutdownPort", getShutdownPort());
         Networking.checkPortsValid(ports);
 
         // We wait for evidence of tomcat running because, using 

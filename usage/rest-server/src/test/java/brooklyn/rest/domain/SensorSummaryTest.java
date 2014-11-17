@@ -18,9 +18,9 @@
  */
 package brooklyn.rest.domain;
 
-import static com.yammer.dropwizard.testing.JsonHelpers.asJson;
-import static com.yammer.dropwizard.testing.JsonHelpers.fromJson;
-import static com.yammer.dropwizard.testing.JsonHelpers.jsonFixture;
+import static brooklyn.rest.util.RestApiTestUtils.asJson;
+import static brooklyn.rest.util.RestApiTestUtils.fromJson;
+import static brooklyn.rest.util.RestApiTestUtils.jsonFixture;
 import static org.testng.Assert.assertEquals;
 
 import java.io.IOException;
@@ -31,7 +31,6 @@ import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
 
 import brooklyn.config.render.RendererHints;
-import brooklyn.entity.basic.ApplicationBuilder;
 import brooklyn.entity.basic.Entities;
 import brooklyn.entity.proxying.EntitySpec;
 import brooklyn.event.AttributeSensor;
@@ -56,7 +55,7 @@ public class SensorSummaryTest {
   
   @BeforeMethod(alwaysRun=true)
   public void setUp() throws Exception {
-      app = ApplicationBuilder.newManagedApp(TestApplication.class);
+      app = TestApplication.Factory.newManagedInstanceForTests();
       mgmt = app.getManagementContext();
       entity = app.createAndManageChild(EntitySpec.create(TestEntity.class));
   }
@@ -93,8 +92,8 @@ public class SensorSummaryTest {
   public void testSensorWithMultipleOpenUrlActionsRegistered() throws IOException {
       AttributeSensor<String> sensor = Sensors.newStringSensor("sensor1");
       entity.setAttribute(sensor, "http://myval");
-      RendererHints.register(sensor, new RendererHints.NamedActionWithUrl("Open"));
-      RendererHints.register(sensor, new RendererHints.NamedActionWithUrl("Open"));
+      RendererHints.register(sensor, RendererHints.namedActionWithUrl());
+      RendererHints.register(sensor, RendererHints.namedActionWithUrl());
 
       SensorSummary summary = SensorTransformer.sensorSummary(entity, sensor);
       

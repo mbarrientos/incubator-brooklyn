@@ -118,7 +118,7 @@ public class LocalhostMachineProvisioningLocation extends FixedListMachineProvis
         return LocationSpec.create(LocalhostMachineProvisioningLocation.class);
     }
     
-    public void configure(Map flags) {
+    public LocalhostMachineProvisioningLocation configure(Map flags) {
         super.configure(flags);
         
         if (!truth(getDisplayName())) { setDisplayName("localhost"); }
@@ -142,6 +142,8 @@ public class LocalhostMachineProvisioningLocation extends FixedListMachineProvis
         if (getConfig(BrooklynConfigKeys.ONBOX_BASE_DIR)==null && (getManagementContext()==null || getManagementContext().getConfig().getConfig(BrooklynConfigKeys.ONBOX_BASE_DIR)==null)) {
             setConfig(BrooklynConfigKeys.ONBOX_BASE_DIR, "/tmp/brooklyn-"+Os.user());
         }
+        
+        return this;
     }
     
     public static InetAddress getLocalhostInetAddress() {
@@ -203,7 +205,7 @@ public class LocalhostMachineProvisioningLocation extends FixedListMachineProvis
             if (LOG.isDebugEnabled()) LOG.debug("Skipping system availability check for privileged localhost port "+portNumber);
             return true;
         }
-        return Networking.isPortAvailable(portNumber);
+        return Networking.isPortAvailable(localAddress, portNumber);
     }
     public static int obtainPort(PortRange range) {
         return obtainPort(getLocalhostInetAddress(), range);
@@ -253,11 +255,18 @@ public class LocalhostMachineProvisioningLocation extends FixedListMachineProvis
         public LocalhostMachine(Map properties) {
             super(MutableMap.builder().putAll(properties).put("mutexSupport", mutexSupport).build());
         }
+        
+        @Override
+        protected WithMutexes getMutexSupport() {
+            return mutexSupport;
+        }
+        
         public boolean obtainSpecificPort(int portNumber) {
             if (!isSudoAllowed() && portNumber <= 1024)
                 return false;
             return LocalhostMachineProvisioningLocation.obtainSpecificPort(getAddress(), portNumber);
         }
+        
         public int obtainPort(PortRange range) {
             int r = LocalhostMachineProvisioningLocation.obtainPort(getAddress(), range);
             synchronized (portsObtained) {
@@ -266,6 +275,7 @@ public class LocalhostMachineProvisioningLocation extends FixedListMachineProvis
             LOG.debug("localhost.obtainPort("+range+"), returning "+r);
             return r;
         }
+        
         @Override
         public void releasePort(int portNumber) {
             synchronized (portsObtained) {
@@ -280,10 +290,11 @@ public class LocalhostMachineProvisioningLocation extends FixedListMachineProvis
         }
         
         @Override
-        public void configure(Map properties) {
+        public LocalhostMachine configure(Map properties) {
             if (address==null || !properties.containsKey("address"))
                 address = Networking.getLocalHost();
             super.configure(properties);
+            return this;
         }
     }
 

@@ -1,3 +1,21 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
 package brooklyn.management.classloading;
 
 import java.net.URL;
@@ -6,6 +24,7 @@ import java.util.List;
 import brooklyn.management.ManagementContext;
 import brooklyn.management.ha.OsgiManager;
 import brooklyn.management.internal.ManagementContextInternal;
+import brooklyn.util.exceptions.Exceptions;
 import brooklyn.util.guava.Maybe;
 
 import com.google.common.base.Objects;
@@ -13,10 +32,12 @@ import com.google.common.base.Objects;
 public class OsgiBrooklynClassLoadingContext extends AbstractBrooklynClassLoadingContext {
 
     private final List<String> bundles;
+    private final String catalogItemId;
 
-    public OsgiBrooklynClassLoadingContext(ManagementContext mgmt, List<String> bundles) {
+    public OsgiBrooklynClassLoadingContext(ManagementContext mgmt, String catalogItemId, List<String> bundles) {
         super(mgmt);
         this.bundles = bundles;
+        this.catalogItemId = catalogItemId;
     }
 
     @SuppressWarnings({ "unchecked", "rawtypes" })
@@ -51,14 +72,17 @@ public class OsgiBrooklynClassLoadingContext extends AbstractBrooklynClassLoadin
     
     @Override
     public int hashCode() {
-        return Objects.hashCode(super.hashCode(), bundles);
+        return Objects.hashCode(super.hashCode(), bundles, catalogItemId);
     }
     
     @Override
     public boolean equals(Object obj) {
         if (!super.equals(obj)) return false;
         if (!(obj instanceof OsgiBrooklynClassLoadingContext)) return false;
-        if (!Objects.equal(bundles, ((OsgiBrooklynClassLoadingContext)obj).bundles)) return false;
+
+        OsgiBrooklynClassLoadingContext other = (OsgiBrooklynClassLoadingContext)obj;
+        if (!catalogItemId.equals(other.catalogItemId)) return false;
+        if (!Objects.equal(bundles, other.bundles)) return false;
         return true;
     }
 
@@ -73,4 +97,8 @@ public class OsgiBrooklynClassLoadingContext extends AbstractBrooklynClassLoadin
         return null;
     }
     
+    public String getCatalogItemId() {
+        return catalogItemId;
+    }
+
 }

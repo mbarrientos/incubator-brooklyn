@@ -20,7 +20,11 @@ package io.brooklyn.camp.brooklyn;
 
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertNotNull;
+import static org.testng.Assert.assertNull;
 import static org.testng.Assert.assertTrue;
+import io.brooklyn.camp.brooklyn.spi.dsl.methods.BrooklynDslCommon;
+import io.brooklyn.camp.brooklyn.spi.dsl.methods.DslComponent;
+import io.brooklyn.camp.brooklyn.spi.dsl.methods.DslComponent.Scope;
 
 import java.io.StringReader;
 import java.util.Iterator;
@@ -40,10 +44,13 @@ import brooklyn.entity.Application;
 import brooklyn.entity.Effector;
 import brooklyn.entity.Entity;
 import brooklyn.entity.basic.Attributes;
+import brooklyn.entity.basic.BasicApplication;
 import brooklyn.entity.basic.BasicEntity;
 import brooklyn.entity.basic.ConfigKeys;
 import brooklyn.entity.basic.Entities;
+import brooklyn.entity.basic.EntityFunctions;
 import brooklyn.entity.basic.EntityInternal;
+import brooklyn.entity.basic.EntityPredicates;
 import brooklyn.entity.basic.Lifecycle;
 import brooklyn.entity.basic.SameServerEntity;
 import brooklyn.entity.effector.Effectors;
@@ -53,11 +60,18 @@ import brooklyn.event.AttributeSensor;
 import brooklyn.event.basic.Sensors;
 import brooklyn.location.Location;
 import brooklyn.management.Task;
+import brooklyn.management.internal.EntityManagementUtils;
 import brooklyn.management.internal.EntityManagerInternal;
 import brooklyn.test.entity.TestEntity;
+import brooklyn.test.entity.TestEntityImpl;
 import brooklyn.util.collections.MutableMap;
+import brooklyn.util.exceptions.Exceptions;
+import brooklyn.util.guava.Functionals;
+import brooklyn.util.guava.Maybe;
+import brooklyn.util.task.Tasks;
 import brooklyn.util.time.Duration;
 
+import com.google.common.base.Suppliers;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
@@ -68,7 +82,7 @@ public class EntitiesYamlTest extends AbstractYamlTest {
     private static final Logger log = LoggerFactory.getLogger(EntitiesYamlTest.class);
 
     protected Entity setupAndCheckTestEntityInBasicYamlWith(String ...extras) throws Exception {
-        Entity app = createAndStartApplication("test-entity-basic-template.yaml", extras);
+        Entity app = createAndStartApplication(loadYaml("test-entity-basic-template.yaml", extras));
         waitForApplicationTasks(app);
 
         Assert.assertEquals(app.getDisplayName(), "test-entity-basic-template");
@@ -160,13 +174,13 @@ public class EntitiesYamlTest extends AbstractYamlTest {
     @SuppressWarnings("unchecked")
     @Test
     public void testEmptyConfig() throws Exception {
-        Entity app = createAndStartApplication("test-entity-basic-template.yaml",
+        Entity app = createAndStartApplication(loadYaml("test-entity-basic-template.yaml",
             "  brooklyn.config:",
             "    test.confName: \"\"",
             "    test.confListPlain: !!seq []",
             "    test.confMapPlain: !!map {}",
             "    test.confSetPlain: !!set {}",
-            "    test.confObject: \"\"");
+            "    test.confObject: \"\""));
         waitForApplicationTasks(app);
 
         Assert.assertEquals(app.getDisplayName(), "test-entity-basic-template");
@@ -192,12 +206,12 @@ public class EntitiesYamlTest extends AbstractYamlTest {
     
     @SuppressWarnings("unchecked")
     public void testEmptyStructuredConfig() throws Exception {
-        Entity app = createAndStartApplication("test-entity-basic-template.yaml",
+        Entity app = createAndStartApplication(loadYaml("test-entity-basic-template.yaml",
             "  brooklyn.config:",
             "    test.confName: \"\"",
             "    test.confListThing: !!seq []",
             "    test.confSetThing: !!set {}",
-            "    test.confMapThing: !!map {}");
+            "    test.confMapThing: !!map {}"));
         waitForApplicationTasks(app);
 
         Assert.assertEquals(app.getDisplayName(), "test-entity-basic-template");
@@ -219,9 +233,9 @@ public class EntitiesYamlTest extends AbstractYamlTest {
 
     @Test
     public void testSensor() throws Exception {
-        Entity app = createAndStartApplication("test-entity-basic-template.yaml", 
+        Entity app = createAndStartApplication(loadYaml("test-entity-basic-template.yaml", 
             "  brooklyn.config:",
-            "    test.confObject: $brooklyn:sensor(\"brooklyn.test.entity.TestEntity\", \"test.sequence\")");
+            "    test.confObject: $brooklyn:sensor(\"brooklyn.test.entity.TestEntity\", \"test.sequence\")"));
         waitForApplicationTasks(app);
 
         Assert.assertEquals(app.getDisplayName(), "test-entity-basic-template");
@@ -241,9 +255,9 @@ public class EntitiesYamlTest extends AbstractYamlTest {
 
     @Test
     public void testSensorOnArbitraryClass() throws Exception {
-        Entity app = createAndStartApplication("test-entity-basic-template.yaml", 
+        Entity app = createAndStartApplication(loadYaml("test-entity-basic-template.yaml", 
             "  brooklyn.config:",
-            "    test.confObject: $brooklyn:sensor(\"io.brooklyn.camp.brooklyn.EntitiesYamlTest$ArbitraryClassWithSensor\", \"mysensor\")");
+            "    test.confObject: $brooklyn:sensor(\"io.brooklyn.camp.brooklyn.EntitiesYamlTest$ArbitraryClassWithSensor\", \"mysensor\")"));
         waitForApplicationTasks(app);
 
         log.info("App started:");
@@ -259,14 +273,14 @@ public class EntitiesYamlTest extends AbstractYamlTest {
     
     @Test
     public void testComponent() throws Exception {
-        Entity app = createAndStartApplication("test-entity-basic-template.yaml",
+        Entity app = createAndStartApplication(loadYaml("test-entity-basic-template.yaml",
             "  brooklyn.config:",
             "    test.confName: first entity",
             "  id: te1",
             "- serviceType: brooklyn.test.entity.TestEntity",
             "  name: second entity",
             "  brooklyn.config:",
-            "    test.confObject: $brooklyn:component(\"te1\")");
+            "    test.confObject: $brooklyn:component(\"te1\")"));
         waitForApplicationTasks(app);
         Entity firstEntity = null;
         Entity secondEntity = null;
@@ -290,7 +304,7 @@ public class EntitiesYamlTest extends AbstractYamlTest {
 
     @Test
     public void testGrandchildEntities() throws Exception {
-        Entity app = createAndStartApplication("test-entity-basic-template.yaml", 
+        Entity app = createAndStartApplication(loadYaml("test-entity-basic-template.yaml", 
             "  brooklyn.config:",
             "    test.confName: first entity",
             "  brooklyn.children:",
@@ -306,7 +320,7 @@ public class EntitiesYamlTest extends AbstractYamlTest {
             "  - serviceType: brooklyn.test.entity.TestEntity",
             "    name: Second Child",
             "    brooklyn.config:",
-            "      test.confName: Name of the second Child");
+            "      test.confName: Name of the second Child"));
         waitForApplicationTasks(app);
         Assert.assertEquals(app.getChildren().size(), 1);
         Entity firstEntity = app.getChildren().iterator().next();
@@ -330,7 +344,7 @@ public class EntitiesYamlTest extends AbstractYamlTest {
 
     @Test
     public void testWithInitConfig() throws Exception {
-        Entity app = createAndStartApplication("test-entity-with-init-config.yaml");
+        Entity app = createAndStartApplication(loadYaml("test-entity-with-init-config.yaml"));
         waitForApplicationTasks(app);
         Assert.assertEquals(app.getDisplayName(), "test-entity-with-init-config");
         TestEntityWithInitConfig testWithConfigInit = null;
@@ -350,9 +364,33 @@ public class EntitiesYamlTest extends AbstractYamlTest {
     }
 
     @Test
-    public void testMultipleReferences() throws Exception {
-        final Entity app = createAndStartApplication("test-referencing-entities.yaml");
+    public void testMultipleReferencesJava() throws Exception {
+        final Entity app = createAndStartApplication(loadYaml("test-referencing-entities.yaml"));
         waitForApplicationTasks(app);
+        
+        Entity c1 = Tasks.resolving(new DslComponent("c1").newTask(), Entity.class).context( ((EntityInternal)app).getExecutionContext() ).embedResolutionInTask(true).get();
+        Assert.assertEquals(c1, Entities.descendants(app, EntityPredicates.displayNameEqualTo("child 1")).iterator().next());
+        
+        Entity e1 = Tasks.resolving(new DslComponent(Scope.PARENT, "xxx").newTask(), Entity.class).context( ((EntityInternal)c1).getExecutionContext() ).embedResolutionInTask(true).get();
+        Assert.assertEquals(e1, Entities.descendants(app, EntityPredicates.displayNameEqualTo("entity 1")).iterator().next());
+        
+        Entity c1a = Tasks.resolving(BrooklynDslCommon.descendant("c1").newTask(), Entity.class).context( ((EntityInternal)e1).getExecutionContext() ).embedResolutionInTask(true).get();
+        Assert.assertEquals(c1a, c1);
+        Entity e1a = Tasks.resolving(BrooklynDslCommon.ancestor("e1").newTask(), Entity.class).context( ((EntityInternal)c1).getExecutionContext() ).embedResolutionInTask(true).get();
+        Assert.assertEquals(e1a, e1);
+        try {
+            Tasks.resolving(BrooklynDslCommon.ancestor("c1").newTask(), Entity.class).context( ((EntityInternal)e1).getExecutionContext() ).embedResolutionInTask(true).get();
+            Assert.fail("Should not have found c1 as ancestor of e1");
+        } catch (Exception e) { /* expected */ }
+    }
+    
+    @Test
+    public void testMultipleReferences() throws Exception {
+        final Entity app = createAndStartApplication(loadYaml("test-referencing-entities.yaml"));
+        waitForApplicationTasks(app);
+        
+        Entities.dumpInfo(app);
+        
         Assert.assertEquals(app.getDisplayName(), "test-referencing-entities");
 
         Entity entity1 = null, entity2 = null, child1 = null, child2 = null, grandchild1 = null, grandchild2 = null;
@@ -390,6 +428,7 @@ public class EntitiesYamlTest extends AbstractYamlTest {
         Map<ConfigKey<Entity>, Entity> keyToEntity = new ImmutableMap.Builder<ConfigKey<Entity>, Entity>()
             .put(ReferencingYamlTestEntity.TEST_REFERENCE_APP, app)
             .put(ReferencingYamlTestEntity.TEST_REFERENCE_ENTITY1, entity1)
+            .put(ReferencingYamlTestEntity.TEST_REFERENCE_ENTITY1_ALT, entity1)
             .put(ReferencingYamlTestEntity.TEST_REFERENCE_ENTITY2, entity2)
             .put(ReferencingYamlTestEntity.TEST_REFERENCE_CHILD1, child1)
             .put(ReferencingYamlTestEntity.TEST_REFERENCE_CHILD2, child2)
@@ -404,25 +443,39 @@ public class EntitiesYamlTest extends AbstractYamlTest {
             }
         }).get();
 
-        for (Entity entityInApp : entitiesInApp)
+        for (Entity entityInApp : entitiesInApp) {
             checkReferences(entityInApp, keyToEntity);
+            try {
+                getResolvedConfigInTask(entityInApp, ReferencingYamlTestEntity.TEST_REFERENCE_BOGUS);
+                Assert.fail("Should not have resolved "+ReferencingYamlTestEntity.TEST_REFERENCE_BOGUS+" at "+entityInApp);
+            } catch (Exception e) {
+                /* expected */
+            }
+        }
     }
 
     private void checkReferences(final Entity entity, Map<ConfigKey<Entity>, Entity> keyToEntity) throws Exception {
         for (final ConfigKey<Entity> key : keyToEntity.keySet()) {
-            Entity fromConfig = ((EntityInternal)entity).getExecutionContext().submit(MutableMap.of(), new Callable<Entity>() {
-                @Override
-                public Entity call() throws Exception {
-                    return (Entity) entity.getConfig(key);
-                }
-            }).get();
-            Assert.assertEquals(fromConfig, keyToEntity.get(key));
+            try {
+                Assert.assertEquals(getResolvedConfigInTask(entity, key).get(), keyToEntity.get(key));
+            } catch (Throwable t) {
+                Exceptions.propagateIfFatal(t);
+                Assert.fail("Wrong value for "+entity+":"+key+", "+entity.getConfigRaw(key,  false)+": "+t, t);
+            }
         }
     }
 
+    private Maybe<Entity> getResolvedConfigInTask(final Entity entity, final ConfigKey<Entity> key) {
+        return Tasks.resolving(Tasks.<Entity>builder().body(
+            Functionals.callable(Suppliers.compose(EntityFunctions.config(key), Suppliers.ofInstance(entity))) ).build())
+            .as(Entity.class)
+            .context( ((EntityInternal)entity).getExecutionContext() ).embedResolutionInTask(true)
+            .getMaybe();
+    }
+
     public void testWithAppLocation() throws Exception {
-        Entity app = createAndStartApplication("test-entity-basic-template.yaml",  
-            "location: localhost:(name=yaml name)");
+        Entity app = createAndStartApplication(loadYaml("test-entity-basic-template.yaml",  
+            "location: localhost:(name=yaml name)"));
         waitForApplicationTasks(app);
         Assert.assertEquals(app.getLocations().size(), 1);
         Location location = app.getLocations().iterator().next();
@@ -436,8 +489,8 @@ public class EntitiesYamlTest extends AbstractYamlTest {
 
     @Test
     public void testWithEntityLocation() throws Exception {
-        Entity app = createAndStartApplication("test-entity-basic-template.yaml",  
-            "  location: localhost:(name=yaml name)\n");
+        Entity app = createAndStartApplication(loadYaml("test-entity-basic-template.yaml",  
+            "  location: localhost:(name=yaml name)\n"));
         waitForApplicationTasks(app);
         Assert.assertEquals(app.getLocations().size(), 0);
         Assert.assertEquals(app.getChildren().size(), 1);
@@ -451,10 +504,10 @@ public class EntitiesYamlTest extends AbstractYamlTest {
 
     @Test
     public void testWith2AppLocations() throws Exception {
-        Entity app = createAndStartApplication("test-entity-basic-template.yaml",  
+        Entity app = createAndStartApplication(loadYaml("test-entity-basic-template.yaml",  
             "locations:",
             "- localhost:(name=localhost name)",
-            "- byon:(hosts=\"1.1.1.1\", name=byon name)");
+            "- byon:(hosts=\"1.1.1.1\", name=byon name)"));
         waitForApplicationTasks(app);
 
         Assert.assertEquals(app.getLocations().size(), 2);
@@ -475,10 +528,10 @@ public class EntitiesYamlTest extends AbstractYamlTest {
 
     @Test
     public void testWith2EntityLocations() throws Exception {
-        Entity app = createAndStartApplication("test-entity-basic-template.yaml",  
+        Entity app = createAndStartApplication(loadYaml("test-entity-basic-template.yaml",  
             "  locations:",
             "  - localhost:(name=localhost name)",
-            "  - byon:(hosts=\"1.1.1.1\", name=byon name)");
+            "  - byon:(hosts=\"1.1.1.1\", name=byon name)"));
         waitForApplicationTasks(app);
         Assert.assertEquals(app.getLocations().size(), 0);
         Assert.assertEquals(app.getChildren().size(), 1);
@@ -497,9 +550,9 @@ public class EntitiesYamlTest extends AbstractYamlTest {
 
     @Test
     public void testWithAppAndEntityLocations() throws Exception {
-        Entity app = createAndStartApplication("test-entity-basic-template.yaml",  
+        Entity app = createAndStartApplication(loadYaml("test-entity-basic-template.yaml",  
             "  location: localhost:(name=localhost name)",
-            "location: byon:(hosts=\"1.1.1.1\", name=byon name)");
+            "location: byon:(hosts=\"1.1.1.1\", name=byon name)"));
         waitForApplicationTasks(app);
         Assert.assertEquals(app.getLocations().size(), 1);
         Assert.assertEquals(app.getChildren().size(), 1);
@@ -516,7 +569,7 @@ public class EntitiesYamlTest extends AbstractYamlTest {
 
     @Test
     public void testCreateClusterWithMemberSpec() throws Exception {
-        Entity app = createAndStartApplication("test-cluster-with-member-spec.yaml");
+        Entity app = createAndStartApplication(loadYaml("test-cluster-with-member-spec.yaml"));
         waitForApplicationTasks(app);
         assertEquals(app.getChildren().size(), 1);
 
@@ -549,6 +602,60 @@ public class EntitiesYamlTest extends AbstractYamlTest {
         
         TestEntity child = (TestEntity) entity.createAndManageChildFromConfig();
         assertEquals(child.getConfig(TestEntity.CONF_NAME), "inchildspec");
+    }
+
+    @Test
+    public void testEntitySpecFlags() throws Exception {
+        String yaml =
+                "services:\n"+
+                "- serviceType: brooklyn.test.entity.TestEntity\n"+
+                "  confName: inParent\n"+
+                "  brooklyn.config:\n"+
+                "   test.childSpec:\n"+
+                "     $brooklyn:entitySpec:\n"+
+                "       type: brooklyn.test.entity.TestEntity\n"+
+                "       confName: inchildspec\n";
+        
+        Application app = (Application) createStartWaitAndLogApplication(new StringReader(yaml));
+        TestEntity entity = (TestEntity) Iterables.getOnlyElement(app.getChildren());
+        
+        TestEntity child = (TestEntity) entity.createAndManageChildFromConfig();
+        assertEquals(child.getConfig(TestEntity.CONF_NAME), "inchildspec");
+    }
+
+    @Test
+    public void testEntitySpecWithChildren() throws Exception {
+        String yaml =
+                "services:\n"+
+                "- serviceType: brooklyn.test.entity.TestEntity\n"+
+                "  brooklyn.config:\n"+
+                "   test.childSpec:\n"+
+                "     $brooklyn:entitySpec:\n"+
+                "       type: brooklyn.test.entity.TestEntity\n"+
+                "       brooklyn.config:\n"+
+                "         test.confName: child\n"+
+                "       brooklyn.children:\n"+
+                "       - type: brooklyn.test.entity.TestEntity\n" +
+                "         brooklyn.config:\n" +
+                "           test.confName: grandchild\n" +
+                "         brooklyn.children:\n"+
+                "         - type: brooklyn.test.entity.TestEntity\n" +
+                "           brooklyn.config:\n" +
+                "             test.confName: greatgrandchild\n";
+        
+        Application app = (Application) createStartWaitAndLogApplication(new StringReader(yaml));
+        TestEntity entity = (TestEntity) Iterables.getOnlyElement(app.getChildren());
+        
+        TestEntity child = (TestEntity) entity.createAndManageChildFromConfig();
+        assertEquals(child.getConfig(TestEntity.CONF_NAME), "child");
+        assertEquals(child.getChildren().size(), 1, "Child entity should have exactly one child of its own");
+
+        TestEntity grandchild = (TestEntity) Iterables.getOnlyElement(child.getChildren());
+        assertEquals(grandchild.getConfig(TestEntity.CONF_NAME), "grandchild");
+        assertEquals(grandchild.getChildren().size(), 1, "Grandchild entity should have exactly one child of its own");
+
+        TestEntity greatgrandchild = (TestEntity) Iterables.getOnlyElement(grandchild.getChildren());
+        assertEquals(greatgrandchild.getConfig(TestEntity.CONF_NAME), "greatgrandchild");
     }
     
     @Test
@@ -599,10 +706,10 @@ public class EntitiesYamlTest extends AbstractYamlTest {
 
     @Test
     public void testAppWithSameServerEntityStarts() throws Exception {
-        Entity app = createAndStartApplication("same-server-entity-test.yaml");
+        Entity app = createAndStartApplication(loadYaml("same-server-entity-test.yaml"));
         waitForApplicationTasks(app);
         assertNotNull(app);
-        assertEquals(app.getAttribute(Attributes.SERVICE_STATE), Lifecycle.RUNNING, "service state");
+        assertEquals(app.getAttribute(Attributes.SERVICE_STATE_ACTUAL), Lifecycle.RUNNING, "service state");
         assertTrue(app.getAttribute(Attributes.SERVICE_UP), "service up");
 
         assertEquals(app.getChildren().size(), 1);
@@ -687,6 +794,62 @@ public class EntitiesYamlTest extends AbstractYamlTest {
         Task<String> saying = entity.invoke(Effectors.effector(String.class, TestSensorAndEffectorInitializer.EFFECTOR_SAY_HELLO).buildAbstract(), 
             MutableMap.of("name", "Bob"));
         Assert.assertEquals(saying.get(Duration.TEN_SECONDS), "Hey Bob");
+    }
+
+    @Test
+    public void testEntityTypeAsImpl() throws Exception {
+        String yaml =
+                "services:"+"\n"+
+                "- type: "+CustomTestEntityImpl.class.getName()+"\n";
+
+        Entity app = createStartWaitAndLogApplication(new StringReader(yaml));
+
+        Entity testEntity = Iterables.getOnlyElement(app.getChildren());
+        assertEquals(testEntity.getEntityType().getName(), "CustomTestEntityImpl");
+    }
+    
+    public static class CustomTestEntityImpl extends TestEntityImpl {
+        public CustomTestEntityImpl() {
+            System.out.println("in CustomTestEntityImpl");
+        }
+        @Override
+        protected String getEntityTypeName() {
+            return "CustomTestEntityImpl";
+        }
+    }
+
+    @Test
+    public void testWrapperAppMarkerExists() throws Exception {
+        Entity entity = createAndStartApplication(
+                "services:",
+                "- type: " + BasicEntity.class.getName());
+        assertTrue(entity.getConfig(EntityManagementUtils.WRAPPER_APP_MARKER));
+    }
+
+    @Test
+    public void testWrapperAppMarkerDoesntExist() throws Exception {
+        Entity entity = createAndStartApplication(
+                "services:",
+                "- type: " + BasicApplication.class.getName());
+        assertNull(entity.getConfig(EntityManagementUtils.WRAPPER_APP_MARKER));
+    }
+
+    @Test
+    public void testWrapperAppMarkerForced() throws Exception {
+        Entity entity = createAndStartApplication(
+                "wrappedApp: true",
+                "services:",
+                "- type: " + BasicApplication.class.getName());
+        assertTrue(entity.getConfig(EntityManagementUtils.WRAPPER_APP_MARKER));
+    }
+
+    @Test
+    public void testWrapperAppMarkerUnforced() throws Exception {
+        Entity entity = createAndStartApplication(
+                "wrappedApp: false",
+                "services:",
+                "- type: " + BasicApplication.class.getName());
+        assertNull(entity.getConfig(EntityManagementUtils.WRAPPER_APP_MARKER));
     }
 
     @Override

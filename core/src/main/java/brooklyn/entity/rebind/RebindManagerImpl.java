@@ -21,40 +21,66 @@ package brooklyn.entity.rebind;
 import static com.google.common.base.Preconditions.checkNotNull;
 
 import java.io.IOException;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Callable;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import brooklyn.basic.AbstractBrooklynObject;
+import brooklyn.basic.BrooklynObject;
+import brooklyn.catalog.CatalogItem;
+import brooklyn.catalog.CatalogLoadMode;
+import brooklyn.catalog.internal.BasicBrooklynCatalog;
+import brooklyn.catalog.internal.CatalogUtils;
+import brooklyn.config.BrooklynLogging;
+import brooklyn.config.BrooklynServerConfig;
 import brooklyn.config.ConfigKey;
+import brooklyn.config.BrooklynLogging.LoggingLevel;
 import brooklyn.enricher.basic.AbstractEnricher;
 import brooklyn.entity.Application;
 import brooklyn.entity.Entity;
+import brooklyn.entity.Feed;
 import brooklyn.entity.basic.AbstractApplication;
 import brooklyn.entity.basic.AbstractEntity;
 import brooklyn.entity.basic.ConfigKeys;
-import brooklyn.entity.basic.Entities;
 import brooklyn.entity.basic.EntityInternal;
-import brooklyn.entity.proxying.EntitySpec;
 import brooklyn.entity.proxying.InternalEntityFactory;
+import brooklyn.entity.proxying.InternalFactory;
 import brooklyn.entity.proxying.InternalLocationFactory;
 import brooklyn.entity.proxying.InternalPolicyFactory;
+import brooklyn.entity.rebind.persister.BrooklynMementoPersisterToObjectStore;
+import brooklyn.event.feed.AbstractFeed;
 import brooklyn.internal.BrooklynFeatureEnablement;
 import brooklyn.location.Location;
 import brooklyn.location.basic.AbstractLocation;
 import brooklyn.location.basic.LocationInternal;
+import brooklyn.management.ExecutionContext;
 import brooklyn.management.Task;
+import brooklyn.management.classloading.BrooklynClassLoadingContext;
+import brooklyn.management.classloading.JavaBrooklynClassLoadingContext;
+import brooklyn.management.ha.HighAvailabilityManagerImpl;
+import brooklyn.management.ha.ManagementNodeState;
+import brooklyn.management.internal.EntityManagerInternal;
+import brooklyn.management.internal.LocationManagerInternal;
 import brooklyn.management.internal.ManagementContextInternal;
+import brooklyn.management.internal.ManagementTransitionInfo.ManagementTransitionMode;
 import brooklyn.mementos.BrooklynMemento;
 import brooklyn.mementos.BrooklynMementoManifest;
+import brooklyn.mementos.BrooklynMementoManifest.EntityMementoManifest;
 import brooklyn.mementos.BrooklynMementoPersister;
 import brooklyn.mementos.BrooklynMementoPersister.LookupContext;
+import brooklyn.mementos.BrooklynMementoRawData;
+import brooklyn.mementos.CatalogItemMemento;
 import brooklyn.mementos.EnricherMemento;
 import brooklyn.mementos.EntityMemento;
+import brooklyn.mementos.FeedMemento;
 import brooklyn.mementos.LocationMemento;
 import brooklyn.mementos.PolicyMemento;
 import brooklyn.mementos.TreeNode;
@@ -63,17 +89,25 @@ import brooklyn.policy.Policy;
 import brooklyn.policy.basic.AbstractPolicy;
 import brooklyn.util.collections.MutableMap;
 import brooklyn.util.exceptions.Exceptions;
+import brooklyn.util.exceptions.RuntimeInterruptedException;
 import brooklyn.util.flags.FlagUtils;
 import brooklyn.util.javalang.Reflections;
 import brooklyn.util.task.BasicExecutionContext;
+import brooklyn.util.task.ScheduledTask;
+import brooklyn.util.task.Tasks;
 import brooklyn.util.text.Strings;
 import brooklyn.util.time.Duration;
+import brooklyn.util.time.Time;
 
+import com.google.api.client.repackaged.com.google.common.base.Preconditions;
+import com.google.common.annotations.Beta;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Optional;
+import com.google.common.base.Stopwatch;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
+import com.google.common.collect.Sets;
 
 /** Manages the persistence/rebind process.
  * <p>
@@ -101,19 +135,26 @@ public class RebindManagerImpl implements RebindManager {
     
     public static final Logger LOG = LoggerFactory.getLogger(RebindManagerImpl.class);
 
+    private final ManagementContextInternal managementContext;
+    
     private volatile Duration periodicPersistPeriod = Duration.ONE_SECOND;
     
-    private volatile boolean running = false;
+    private volatile boolean persistenceRunning = false;
+    private volatile PeriodicDeltaChangeListener persistenceRealChangeListener;
+    private volatile ChangeListener persistencePublicChangeListener;
     
-    private final ManagementContextInternal managementContext;
-
-    private volatile PeriodicDeltaChangeListener realChangeListener;
-    private volatile ChangeListener changeListener;
+    private volatile boolean readOnlyRunning = false;
+    private volatile ScheduledTask readOnlyTask = null;
+    private transient Semaphore rebindActive = new Semaphore(1);
+    private transient int readOnlyRebindCount = Integer.MIN_VALUE;
     
-    private volatile BrooklynMementoPersister persister;
+    private volatile BrooklynMementoPersister persistenceStoreAccess;
 
     private final boolean persistPoliciesEnabled;
     private final boolean persistEnrichersEnabled;
+    private final boolean persistFeedsEnabled;
+    private final boolean persistCatalogItemsEnabled;
+    
     private RebindFailureMode danglingRefFailureMode;
     private RebindFailureMode rebindFailureMode;
     private RebindFailureMode addPolicyFailureMode;
@@ -126,6 +167,7 @@ public class RebindManagerImpl implements RebindManager {
      * 
      * @author aled
      */
+    @Beta
     public static class RebindTracker {
         private static ThreadLocal<Boolean> rebinding = new ThreadLocal<Boolean>();
         
@@ -144,24 +186,27 @@ public class RebindManagerImpl implements RebindManager {
 
     public RebindManagerImpl(ManagementContextInternal managementContext) {
         this.managementContext = managementContext;
-        this.changeListener = ChangeListener.NOOP;
+        this.persistencePublicChangeListener = ChangeListener.NOOP;
         
         this.persistPoliciesEnabled = BrooklynFeatureEnablement.isEnabled(BrooklynFeatureEnablement.FEATURE_POLICY_PERSISTENCE_PROPERTY);
         this.persistEnrichersEnabled = BrooklynFeatureEnablement.isEnabled(BrooklynFeatureEnablement.FEATURE_ENRICHER_PERSISTENCE_PROPERTY);
+        this.persistFeedsEnabled = BrooklynFeatureEnablement.isEnabled(BrooklynFeatureEnablement.FEATURE_FEED_PERSISTENCE_PROPERTY);
+        this.persistCatalogItemsEnabled = BrooklynFeatureEnablement.isEnabled(BrooklynFeatureEnablement.FEATURE_CATALOG_PERSISTENCE_PROPERTY);
 
         danglingRefFailureMode = managementContext.getConfig().getConfig(DANGLING_REFERENCE_FAILURE_MODE);
         rebindFailureMode = managementContext.getConfig().getConfig(REBIND_FAILURE_MODE);
         addPolicyFailureMode = managementContext.getConfig().getConfig(ADD_POLICY_FAILURE_MODE);
         loadPolicyFailureMode = managementContext.getConfig().getConfig(LOAD_POLICY_FAILURE_MODE);
-        
-        LOG.debug("Persistence in "+this+" of: policies="+persistEnrichersEnabled+" enrichers="+persistEnrichersEnabled);
+
+        LOG.debug("{} initialized, settings: policies={}, enrichers={}, feeds={}, catalog={}",
+                new Object[]{this, persistPoliciesEnabled, persistEnrichersEnabled, persistFeedsEnabled, persistCatalogItemsEnabled});
     }
 
     /**
      * Must be called before setPerister()
      */
     public void setPeriodicPersistPeriod(Duration period) {
-        if (persister!=null) throw new IllegalStateException("Cannot set period after persister is generated.");
+        if (persistenceStoreAccess!=null) throw new IllegalStateException("Cannot set period after persister is generated.");
         this.periodicPersistPeriod = period;
     }
 
@@ -172,6 +217,14 @@ public class RebindManagerImpl implements RebindManager {
         setPeriodicPersistPeriod(Duration.of(periodMillis, TimeUnit.MILLISECONDS));
     }
 
+    public boolean isPersistenceRunning() {
+        return persistenceRunning;
+    }
+    
+    public boolean isReadOnlyRunning() {
+        return readOnlyRunning;
+    }
+    
     @Override
     public void setPersister(BrooklynMementoPersister val) {
         PersistenceExceptionHandler exceptionHandler = PersistenceExceptionHandlerImpl.builder()
@@ -181,85 +234,211 @@ public class RebindManagerImpl implements RebindManager {
 
     @Override
     public void setPersister(BrooklynMementoPersister val, PersistenceExceptionHandler exceptionHandler) {
-        if (persister != null && persister != val) {
-            throw new IllegalStateException("Dynamically changing persister is not supported: old="+persister+"; new="+val);
+        if (persistenceStoreAccess != null && persistenceStoreAccess != val) {
+            throw new IllegalStateException("Dynamically changing persister is not supported: old="+persistenceStoreAccess+"; new="+val);
         }
-        this.persister = checkNotNull(val, "persister");
+        this.persistenceStoreAccess = checkNotNull(val, "persister");
         
-        this.realChangeListener = new PeriodicDeltaChangeListener(managementContext.getExecutionManager(), persister, exceptionHandler, periodicPersistPeriod.toMilliseconds());
-        this.changeListener = new SafeChangeListener(realChangeListener);
+        this.persistenceRealChangeListener = new PeriodicDeltaChangeListener(managementContext.getServerExecutionContext(), persistenceStoreAccess, exceptionHandler, periodicPersistPeriod);
+        this.persistencePublicChangeListener = new SafeChangeListener(persistenceRealChangeListener);
         
-        if (running) {
-            realChangeListener.start();
+        if (persistenceRunning) {
+            persistenceRealChangeListener.start();
         }
     }
 
     @Override
     @VisibleForTesting
     public BrooklynMementoPersister getPersister() {
-        return persister;
+        return persistenceStoreAccess;
+    }
+    
+    @Override
+    public void startPersistence() {
+        if (readOnlyRunning) {
+            throw new IllegalStateException("Cannot start read-only when already running with persistence");
+        }
+        LOG.debug("Starting persistence ("+this+"), mgmt "+managementContext.getManagementNodeId());
+        persistenceRunning = true;
+        readOnlyRebindCount = Integer.MIN_VALUE;
+        persistenceStoreAccess.enableWriteAccess();
+        if (persistenceRealChangeListener != null) persistenceRealChangeListener.start();
+    }
+    
+    @Override
+    public void stopPersistence() {
+        LOG.debug("Stopping persistence ("+this+"), mgmt "+managementContext.getManagementNodeId());
+        persistenceRunning = false;
+        if (persistenceRealChangeListener != null) persistenceRealChangeListener.stop();
+        if (persistenceStoreAccess != null) persistenceStoreAccess.disableWriteAccess(true);
+        LOG.debug("Stopped rebind (persistence), mgmt "+managementContext.getManagementNodeId());
+    }
+    
+    @SuppressWarnings("unchecked")
+    @Override
+    public void startReadOnly() {
+        if (persistenceRunning) {
+            throw new IllegalStateException("Cannot start read-only when already running with persistence");
+        }
+        if (readOnlyRunning || readOnlyTask!=null) {
+            LOG.warn("Cannot request read-only mode for "+this+" when already running - "+readOnlyTask+"; ignoring");
+            return;
+        }
+        LOG.debug("Starting read-only rebinding ("+this+"), mgmt "+managementContext.getManagementNodeId());
+        
+        if (persistenceRealChangeListener != null) persistenceRealChangeListener.stop();
+        if (persistenceStoreAccess != null) persistenceStoreAccess.disableWriteAccess(true);
+        
+        readOnlyRunning = true;
+        readOnlyRebindCount = 0;
+
+        try {
+            rebind(null, null, ManagementNodeState.HOT_STANDBY);
+        } catch (Exception e) {
+            Exceptions.propagate(e);
+        }
+        
+        Callable<Task<?>> taskFactory = new Callable<Task<?>>() {
+            @Override public Task<Void> call() {
+                return Tasks.<Void>builder().dynamic(false).name("rebind (periodic run").body(new Callable<Void>() {
+                    public Void call() {
+                        try {
+                            rebind(null, null, ManagementNodeState.HOT_STANDBY);
+                            readOnlyRebindCount++;
+                            return null;
+                        } catch (RuntimeInterruptedException e) {
+                            LOG.debug("Interrupted rebinding (re-interrupting): "+e);
+                            if (LOG.isTraceEnabled())
+                                LOG.trace("Interrupted rebinding (re-interrupting), details: "+e, e);
+                            Thread.currentThread().interrupt();
+                            return null;
+                        } catch (Exception e) {
+                            // Don't rethrow: the behaviour of executionManager is different from a scheduledExecutorService,
+                            // if we throw an exception, then our task will never get executed again
+                            if (!readOnlyRunning) {
+                                LOG.debug("Problem rebinding (read-only running has probably just been turned off): "+e);
+                                if (LOG.isTraceEnabled()) {
+                                    LOG.trace("Problem rebinding (read-only running has probably just been turned off), details: "+e, e);
+                                }
+                            } else {
+                                LOG.error("Problem rebinding: "+Exceptions.collapseText(e), e);
+                            }
+                            return null;
+                        } catch (Throwable t) {
+                            LOG.warn("Problem rebinding (rethrowing)", t);
+                            throw Exceptions.propagate(t);
+                        }
+                    }}).build();
+            }
+        };
+        readOnlyTask = (ScheduledTask) managementContext.getServerExecutionContext().submit(
+            new ScheduledTask(MutableMap.of("displayName", "Periodic read-only rebind"), taskFactory).period(periodicPersistPeriod));
+    }
+    
+    @Override
+    public void stopReadOnly() {
+        readOnlyRunning = false;
+        if (readOnlyTask!=null) {
+            LOG.debug("Stopping read-only rebinding ("+this+"), mgmt "+managementContext.getManagementNodeId());
+            readOnlyTask.cancel(true);
+            readOnlyTask.blockUntilEnded();
+            boolean reallyEnded = Tasks.blockUntilInternalTasksEnded(readOnlyTask, Duration.TEN_SECONDS);
+            if (!reallyEnded) {
+                LOG.warn("Rebind (read-only) tasks took too long to die after interrupt (ignoring): "+readOnlyTask);
+            }
+            readOnlyTask = null;
+            LOG.debug("Stopped read-only rebinding ("+this+"), mgmt "+managementContext.getManagementNodeId());
+        }
     }
     
     @Override
     public void start() {
-        running = true;
-        if (realChangeListener != null) realChangeListener.start();
+        ManagementNodeState target = getRebindMode();
+        if (target==ManagementNodeState.HOT_STANDBY) {
+            startReadOnly();
+        } else if (target==ManagementNodeState.MASTER) {
+            startPersistence();
+        } else {
+            LOG.warn("Nothing to start in "+this+" when HA mode is "+target);
+        }
     }
-    
+
     @Override
     public void stop() {
-        running = false;
-        if (realChangeListener != null) realChangeListener.stop();
-        if (persister != null) persister.stop(true);
+        stopReadOnly();
+        stopPersistence();
+        if (persistenceStoreAccess != null) persistenceStoreAccess.stop(true);
+    }
+    
+    protected ManagementNodeState getRebindMode() {
+        if (managementContext==null) throw new IllegalStateException("Invalid "+this+": no management context");
+        if (!(managementContext.getHighAvailabilityManager() instanceof HighAvailabilityManagerImpl))
+            throw new IllegalStateException("Invalid "+this+": unknown HA manager type "+managementContext.getHighAvailabilityManager());
+        ManagementNodeState target = ((HighAvailabilityManagerImpl)managementContext.getHighAvailabilityManager()).getTransitionTargetNodeState();
+        return target;
     }
     
     @Override
     @VisibleForTesting
+    @Deprecated /** @deprecated since 0.7.0 use Duration as argument */
     public void waitForPendingComplete(long timeout, TimeUnit unit) throws InterruptedException, TimeoutException {
         waitForPendingComplete(Duration.of(timeout, unit));
     }
     @Override
     @VisibleForTesting
     public void waitForPendingComplete(Duration timeout) throws InterruptedException, TimeoutException {
-        if (persister == null || !running) return;
-        realChangeListener.waitForPendingComplete(timeout);
-        persister.waitForWritesCompleted(timeout);
+        if (persistenceStoreAccess == null || !persistenceRunning) return;
+        persistenceRealChangeListener.waitForPendingComplete(timeout);
+        persistenceStoreAccess.waitForWritesCompleted(timeout);
     }
     @Override
     @VisibleForTesting
     public void forcePersistNow() {
-        realChangeListener.persistNow();
+        persistenceRealChangeListener.persistNow();
     }
     
     @Override
     public ChangeListener getChangeListener() {
-        return changeListener;
+        return persistencePublicChangeListener;
     }
     
     @Override
-    public List<Application> rebind() throws IOException {
-        return rebind(managementContext.getCatalog().getRootClassLoader());
+    public List<Application> rebind() {
+        return rebind(null, null, null);
     }
     
     @Override
-    public List<Application> rebind(final ClassLoader classLoader) throws IOException {
-        RebindExceptionHandler exceptionHandler = RebindExceptionHandlerImpl.builder()
+    public List<Application> rebind(final ClassLoader classLoader) {
+        return rebind(classLoader, null, null);
+    }
+
+    @Override
+    public List<Application> rebind(final ClassLoader classLoader, final RebindExceptionHandler exceptionHandler) {
+        return rebind(classLoader, exceptionHandler, null);
+    }
+    
+    @Override
+    public List<Application> rebind(ClassLoader classLoaderO, RebindExceptionHandler exceptionHandlerO, ManagementNodeState modeO) {
+        final ClassLoader classLoader = classLoaderO!=null ? classLoaderO :
+            managementContext.getCatalog().getRootClassLoader();
+        final RebindExceptionHandler exceptionHandler = exceptionHandlerO!=null ? exceptionHandlerO :
+            RebindExceptionHandlerImpl.builder()
                 .danglingRefFailureMode(danglingRefFailureMode)
                 .rebindFailureMode(rebindFailureMode)
                 .addPolicyFailureMode(addPolicyFailureMode)
                 .loadPolicyFailureMode(loadPolicyFailureMode)
                 .build();
-        return rebind(classLoader, exceptionHandler);
-    }
+        final ManagementNodeState mode = modeO!=null ? modeO : getRebindMode();
+        
+        if (mode!=ManagementNodeState.HOT_STANDBY && mode!=ManagementNodeState.MASTER)
+            throw new IllegalStateException("Must be either master or read only to rebind (mode "+mode+")");
 
-    @Override
-    public List<Application> rebind(final ClassLoader classLoader, final RebindExceptionHandler exceptionHandler) throws IOException {
-        BasicExecutionContext ec = BasicExecutionContext.getCurrentExecutionContext();
+        ExecutionContext ec = BasicExecutionContext.getCurrentExecutionContext();
         if (ec == null) {
-            ec = new BasicExecutionContext(managementContext.getExecutionManager());
+            ec = managementContext.getServerExecutionContext();
             Task<List<Application>> task = ec.submit(new Callable<List<Application>>() {
                 @Override public List<Application> call() throws Exception {
-                    return rebindImpl(classLoader, exceptionHandler);
+                    return rebindImpl(classLoader, exceptionHandler, mode);
                 }});
             try {
                 return task.get();
@@ -267,43 +446,197 @@ public class RebindManagerImpl implements RebindManager {
                 throw Exceptions.propagate(e);
             }
         } else {
-            return rebindImpl(classLoader, exceptionHandler);
+            return rebindImpl(classLoader, exceptionHandler, mode);
         }
     }
     
-    protected List<Application> rebindImpl(final ClassLoader classLoader, final RebindExceptionHandler exceptionHandler) throws IOException {
+    @Override
+    public BrooklynMementoRawData retrieveMementoRawData() throws IOException {
+        RebindExceptionHandler exceptionHandler = RebindExceptionHandlerImpl.builder()
+                .danglingRefFailureMode(danglingRefFailureMode)
+                .rebindFailureMode(rebindFailureMode)
+                .addPolicyFailureMode(addPolicyFailureMode)
+                .loadPolicyFailureMode(loadPolicyFailureMode)
+                .build();
+        
+        return loadMementoRawData(exceptionHandler);
+    }
+
+    /**
+     * Uses the persister to retrieve (and thus deserialize) the memento.
+     * 
+     * In so doing, it instantiates the entities + locations, registering them with the rebindContext.
+     */
+    protected BrooklynMementoRawData loadMementoRawData(final RebindExceptionHandler exceptionHandler) throws IOException {
+        try {
+            if (!(persistenceStoreAccess instanceof BrooklynMementoPersisterToObjectStore)) {
+                throw new IllegalStateException("Cannot load raw memento with persister "+persistenceStoreAccess);
+            }
+            
+            return ((BrooklynMementoPersisterToObjectStore)persistenceStoreAccess).loadMementoRawData(exceptionHandler);
+            
+        } catch (RuntimeException e) {
+            throw exceptionHandler.onFailed(e);
+        }
+    }
+    
+    protected List<Application> rebindImpl(final ClassLoader classLoader, final RebindExceptionHandler exceptionHandler, ManagementNodeState mode) {
         checkNotNull(classLoader, "classLoader");
 
+        try {
+            rebindActive.acquire();
+        } catch (InterruptedException e1) { Exceptions.propagate(e1); }
         RebindTracker.setRebinding();
         try {
-            Reflections reflections = new Reflections(classLoader);
-            Map<String,Entity> entities = Maps.newLinkedHashMap();
-            Map<String,Location> locations = Maps.newLinkedHashMap();
-            Map<String,Policy> policies = Maps.newLinkedHashMap();
-            Map<String,Enricher> enrichers = Maps.newLinkedHashMap();
+            Stopwatch timer = Stopwatch.createStarted();
+            exceptionHandler.onStart();
             
-            final RebindContextImpl rebindContext = new RebindContextImpl(exceptionHandler, classLoader);
+            Reflections reflections = new Reflections(classLoader);
+            RebindContextImpl rebindContext = new RebindContextImpl(exceptionHandler, classLoader);
+            if (mode==ManagementNodeState.HOT_STANDBY) {
+                rebindContext.setAllReadOnly();
+            } else {
+                Preconditions.checkState(mode==ManagementNodeState.MASTER, "Must be either master or read only to rebind (mode "+mode+")");
+            }
+            
             LookupContext realLookupContext = new RebindContextLookupContext(managementContext, rebindContext, exceptionHandler);
             
-            // Four-phase deserialization.
+            // Mutli-phase deserialization.
+            //
             //  1. deserialize just the "manifest" to find all instances (and their types).
-            //  2. deserialize so that inter-entity references can be set (and entity config/state is set).
-            //  3. add policies+enrichers to all the entities.
-            //  4. manage the entities
+            //  2. instantiate and reconstruct catalog items
+            //  3. instantiate entities+locations so that inter-entity references can subsequently be set during deserialize (and entity config/state is set).
+            //  4. deserialize the memento
+            //  5. instantiate policies+enricherss+feeds (could perhaps merge this with (3), depending how they are implemented)
+            //  6. reconstruct the entities etc (i.e. calling init on the already-instantiated instances).
+            //  7. add policies+enrichers+feeds to all the entities.
+            //  8. manage the entities
             
-            // TODO if underlying data-store is changed between first and second phase (e.g. to add an
+            // TODO if underlying data-store is changed between first and second manifest read (e.g. to add an
             // entity), then second phase might try to reconstitute an entity that has not been put in
             // the rebindContext. This should not affect normal production usage, because rebind is run
             // against a data-store that is not being written to by other brooklyn instance(s).
-            
+
+            // TODO Rebinding to code in OSGi bundles:
+            // Inferring the catalog item id context:
+            //   * most of the time the creator will be passing "my catalog item id" 
+            //     (or API could also take "BrooklynObject me" as a creation context and the 
+            //     receiver query the creator's catalog item id)
+            //   * look at the context entity of Tasks.current() (if set)
+            //   * propagate the catalog item id when doing setEntity, addChild
+            //   * when none of the above work (or they are wrong) let the user specify the catalog item
+            //
+            //  Precedence of setting the catalog item ID:
+            //   1. User-supplied catalog item ID.
+            //   2. Creating from a catalog item - all items resolved during the creation of a spec
+            //      from a catalog item receive the catalog item's ID as context.
+            //   3. When using the Java API for creating specs get the catalog item ID from the
+            //      context entity of the Tasks.current() task.
+            //   4. Propagate the context catalog item ID to children, adjuncts if they don't have one already.
+
             //
             // PHASE ONE
             //
-            
-            BrooklynMementoManifest mementoManifest = persister.loadMementoManifest(exceptionHandler);
 
+            //The manifest contains full catalog items mementos. Reading them at this stage means that
+            //we don't support references to entities/locations withing tags.
+            
+            LOG.debug("Rebinding ("+mode+
+                (readOnlyRebindCount>Integer.MIN_VALUE ? ", iteration "+readOnlyRebindCount : "")+
+                ") from "+getPersister().getBackingStoreDescription()+"...");
+
+            BrooklynMementoRawData mementoRawData = persistenceStoreAccess.loadMementoRawData(exceptionHandler);
+            BrooklynMementoManifest mementoManifest = persistenceStoreAccess.loadMementoManifest(mementoRawData, exceptionHandler);
+
+            boolean isEmpty = mementoManifest.isEmpty();
+            if (mode!=ManagementNodeState.HOT_STANDBY) {
+                if (!isEmpty) { 
+                    LOG.info("Rebinding from "+getPersister().getBackingStoreDescription()+"...");
+                } else {
+                    LOG.info("Rebind check: no existing state; will persist new items to "+getPersister().getBackingStoreDescription());
+                }
+            }
+
+            //
+            // PHASE TWO
+            //
+            
+            // Instantiate catalog items
+            if (persistCatalogItemsEnabled) {
+                logRebindingDebug("RebindManager instantiating catalog items: {}", mementoManifest.getCatalogItemIds());
+                for (CatalogItemMemento catalogItemMemento : mementoManifest.getCatalogItemMementos().values()) {
+                    if (LOG.isDebugEnabled()) LOG.debug("RebindManager instantiating catalog item {}", catalogItemMemento);
+                    try {
+                        CatalogItem<?, ?> catalogItem = newCatalogItem(catalogItemMemento, reflections);
+                        rebindContext.registerCatalogItem(catalogItemMemento.getId(), catalogItem);
+                    } catch (Exception e) {
+                        exceptionHandler.onCreateFailed(BrooklynObjectType.CATALOG_ITEM, catalogItemMemento.getId(), catalogItemMemento.getType(), e);
+                    }
+                }
+            } else {
+                logRebindingDebug("Not rebinding catalog; feature disabled: {}", mementoManifest.getCatalogItemIds());
+            }
+
+            // Reconstruct catalog entries
+            if (persistCatalogItemsEnabled) {
+                logRebindingDebug("RebindManager reconstructing catalog items");
+                for (CatalogItemMemento catalogItemMemento : mementoManifest.getCatalogItemMementos().values()) {
+                    CatalogItem<?, ?> item = rebindContext.getCatalogItem(catalogItemMemento.getId());
+                    logRebindingDebug("RebindManager reconstructing catalog item {}", catalogItemMemento);
+                    if (item == null) {
+                        exceptionHandler.onNotFound(BrooklynObjectType.CATALOG_ITEM, catalogItemMemento.getId());
+                    } else {
+                        try {
+                            item.getRebindSupport().reconstruct(rebindContext, catalogItemMemento);
+                            if (item instanceof AbstractBrooklynObject) {
+                                AbstractBrooklynObject.class.cast(item).setManagementContext(managementContext);
+                            }
+                        } catch (Exception e) {
+                            exceptionHandler.onRebindFailed(BrooklynObjectType.CATALOG_ITEM, item, e);
+                        }
+                    }
+                }
+            }
+            
+            // Register catalogue items with the management context. Loads the bundles in the OSGi framework.
+            CatalogLoadMode catalogLoadMode = managementContext.getConfig().getConfig(BrooklynServerConfig.CATALOG_LOAD_MODE);
+            if (persistCatalogItemsEnabled) {
+                boolean shouldResetCatalog = catalogLoadMode == CatalogLoadMode.LOAD_PERSISTED_STATE
+                        || (!isEmpty && catalogLoadMode == CatalogLoadMode.LOAD_BROOKLYN_CATALOG_URL_IF_NO_PERSISTED_STATE);
+                boolean shouldLoadDefaultCatalog = catalogLoadMode == CatalogLoadMode.LOAD_BROOKLYN_CATALOG_URL
+                        || (isEmpty && catalogLoadMode == CatalogLoadMode.LOAD_BROOKLYN_CATALOG_URL_IF_NO_PERSISTED_STATE);
+                if (shouldResetCatalog) {
+                    // Reset catalog with previously persisted state
+                    logRebindingDebug("RebindManager resetting management context catalog to previously persisted state");
+                    managementContext.getCatalog().reset(rebindContext.getCatalogItems());
+                } else if (shouldLoadDefaultCatalog) {
+                    // Load catalogue as normal
+                    // TODO in read-only mode, should do this less frequently than entities etc
+                    logRebindingDebug("RebindManager loading default catalog");
+                    ((BasicBrooklynCatalog) managementContext.getCatalog()).resetCatalogToContentsAtConfiguredUrl();
+                } else {
+                    // Management context should have taken care of loading the catalogue
+                    Collection<CatalogItem<?, ?>> catalogItems = rebindContext.getCatalogItems();
+                    String message = "RebindManager not resetting catalog to persisted state. Catalog load mode is {}.";
+                    if (!catalogItems.isEmpty() && shouldLogRebinding()) {
+                        LOG.info(message + " There {} {} item{} persisted.", new Object[]{
+                                catalogLoadMode, catalogItems.size() == 1 ? "was" : "were", catalogItems.size(), Strings.s(catalogItems)});
+                    } else if (LOG.isDebugEnabled()) {
+                        logRebindingDebug(message, catalogLoadMode);
+                    }
+                }
+                // TODO destroy old (as above)
+            } else {
+                logRebindingDebug("RebindManager not resetting catalog because catalog persistence is disabled");
+            }
+            
+            
+            //
+            // PHASE THREE
+            //
+            
             // Instantiate locations
-            LOG.debug("RebindManager instantiating locations: {}", mementoManifest.getLocationIdToType().keySet());
+            logRebindingDebug("RebindManager instantiating locations: {}", mementoManifest.getLocationIdToType().keySet());
             for (Map.Entry<String, String> entry : mementoManifest.getLocationIdToType().entrySet()) {
                 String locId = entry.getKey();
                 String locType = entry.getValue();
@@ -311,103 +644,129 @@ public class RebindManagerImpl implements RebindManager {
                 
                 try {
                     Location location = newLocation(locId, locType, reflections);
-                    locations.put(locId, location);
                     rebindContext.registerLocation(locId, location);
                 } catch (Exception e) {
-                    exceptionHandler.onCreateLocationFailed(locId, locType, e);
+                    exceptionHandler.onCreateFailed(BrooklynObjectType.LOCATION, locId, locType, e);
                 }
             }
             
             // Instantiate entities
-            LOG.debug("RebindManager instantiating entities: {}", mementoManifest.getEntityIdToType().keySet());
-            for (Map.Entry<String, String> entry : mementoManifest.getEntityIdToType().entrySet()) {
+            logRebindingDebug("RebindManager instantiating entities: {}", mementoManifest.getEntityIdToManifest().keySet());
+            for (Map.Entry<String, EntityMementoManifest> entry : mementoManifest.getEntityIdToManifest().entrySet()) {
                 String entityId = entry.getKey();
-                String entityType = entry.getValue();
+                EntityMementoManifest entityManifest = entry.getValue();
+                String catalogItemId = findCatalogItemId(mementoManifest.getEntityIdToManifest(), entityManifest);
                 if (LOG.isTraceEnabled()) LOG.trace("RebindManager instantiating entity {}", entityId);
                 
                 try {
-                    Entity entity = newEntity(entityId, entityType, reflections);
-                    entities.put(entityId, entity);
+                    Entity entity = newEntity(entityId, entityManifest.getType(), getLoadingContextFromCatalogItemId(catalogItemId, classLoader, rebindContext));
+                    ((EntityInternal)entity).getManagementSupport().setReadOnly( rebindContext.isReadOnly(entity) );
                     rebindContext.registerEntity(entityId, entity);
+                    
                 } catch (Exception e) {
-                    exceptionHandler.onCreateEntityFailed(entityId, entityType, e);
+                    exceptionHandler.onCreateFailed(BrooklynObjectType.ENTITY, entityId, entityManifest.getType(), e);
                 }
             }
             
-            BrooklynMemento memento = persister.loadMemento(realLookupContext, exceptionHandler);
+            
+            //
+            // PHASE FOUR
+            //
+            
+            BrooklynMemento memento = persistenceStoreAccess.loadMemento(mementoRawData, realLookupContext, exceptionHandler);
+            
+            
+            //
+            // PHASE FIVE
+            //
             
             // Instantiate policies
             if (persistPoliciesEnabled) {
-                LOG.debug("RebindManager instantiating policies: {}", memento.getPolicyIds());
+                logRebindingDebug("RebindManager instantiating policies: {}", memento.getPolicyIds());
                 for (PolicyMemento policyMemento : memento.getPolicyMementos().values()) {
-                    if (LOG.isDebugEnabled()) LOG.debug("RebindManager instantiating policy {}", policyMemento);
+                    logRebindingDebug("RebindManager instantiating policy {}", policyMemento);
                     
                     try {
-                        Policy policy = newPolicy(policyMemento, reflections);
-                        policies.put(policyMemento.getId(), policy);
+                        Policy policy = newPolicy(policyMemento, getLoadingContextFromCatalogItemId(policyMemento.getCatalogItemId(), classLoader, rebindContext));
                         rebindContext.registerPolicy(policyMemento.getId(), policy);
                     } catch (Exception e) {
-                        exceptionHandler.onCreatePolicyFailed(policyMemento.getId(), policyMemento.getType(), e);
+                        exceptionHandler.onCreateFailed(BrooklynObjectType.POLICY, policyMemento.getId(), policyMemento.getType(), e);
                     }
                 }
             } else {
-                LOG.debug("Not rebinding policies; feature disabled: {}", memento.getPolicyIds());
+                logRebindingDebug("Not rebinding policies; feature disabled: {}", memento.getPolicyIds());
             }
             
             // Instantiate enrichers
             if (persistEnrichersEnabled) {
-                LOG.debug("RebindManager instantiating enrichers: {}", memento.getEnricherIds());
+                logRebindingDebug("RebindManager instantiating enrichers: {}", memento.getEnricherIds());
                 for (EnricherMemento enricherMemento : memento.getEnricherMementos().values()) {
-                    if (LOG.isDebugEnabled()) LOG.debug("RebindManager instantiating enricher {}", enricherMemento);
+                    logRebindingDebug("RebindManager instantiating enricher {}", enricherMemento);
 
                     try {
                         Enricher enricher = newEnricher(enricherMemento, reflections);
-                        enrichers.put(enricherMemento.getId(), enricher);
                         rebindContext.registerEnricher(enricherMemento.getId(), enricher);
                     } catch (Exception e) {
-                        exceptionHandler.onCreateEnricherFailed(enricherMemento.getId(), enricherMemento.getType(), e);
+                        exceptionHandler.onCreateFailed(BrooklynObjectType.ENRICHER, enricherMemento.getId(), enricherMemento.getType(), e);
                     }
                 }
             } else {
-                LOG.debug("Not rebinding enrichers; feature disabled: {}", memento.getEnricherIds());
+                logRebindingDebug("Not rebinding enrichers; feature disabled: {}", memento.getEnricherIds());
             } 
             
+            // Instantiate feeds
+            if (persistFeedsEnabled) {
+                logRebindingDebug("RebindManager instantiating feeds: {}", memento.getFeedIds());
+                for (FeedMemento feedMemento : memento.getFeedMementos().values()) {
+                    if (LOG.isDebugEnabled()) LOG.debug("RebindManager instantiating feed {}", feedMemento);
+
+                    try {
+                        Feed feed = newFeed(feedMemento, reflections);
+                        rebindContext.registerFeed(feedMemento.getId(), feed);
+                    } catch (Exception e) {
+                        exceptionHandler.onCreateFailed(BrooklynObjectType.FEED, feedMemento.getId(), feedMemento.getType(), e);
+                    }
+                }
+            } else {
+                logRebindingDebug("Not rebinding feeds; feature disabled: {}", memento.getFeedIds());
+            } 
+
             //
-            // PHASE TWO
+            // PHASE SIX
             //
             
             // Reconstruct locations
-            LOG.debug("RebindManager reconstructing locations");
+            logRebindingDebug("RebindManager reconstructing locations");
             for (LocationMemento locMemento : sortParentFirst(memento.getLocationMementos()).values()) {
                 Location location = rebindContext.getLocation(locMemento.getId());
-                if (LOG.isDebugEnabled()) LOG.debug("RebindManager reconstructing location {}", locMemento);
+                logRebindingDebug("RebindManager reconstructing location {}", locMemento);
                 if (location == null) {
                     // usually because of creation-failure, when not using fail-fast
-                    exceptionHandler.onLocationNotFound(locMemento.getId());
+                    exceptionHandler.onNotFound(BrooklynObjectType.LOCATION, locMemento.getId());
                 } else {
                     try {
                         ((LocationInternal)location).getRebindSupport().reconstruct(rebindContext, locMemento);
                     } catch (Exception e) {
-                        exceptionHandler.onRebindLocationFailed(location, e);
+                        exceptionHandler.onRebindFailed(BrooklynObjectType.LOCATION, location, e);
                     }
                 }
             }
 
             // Reconstruct policies
             if (persistPoliciesEnabled) {
-                LOG.debug("RebindManager reconstructing policies");
+                logRebindingDebug("RebindManager reconstructing policies");
                 for (PolicyMemento policyMemento : memento.getPolicyMementos().values()) {
                     Policy policy = rebindContext.getPolicy(policyMemento.getId());
-                    if (LOG.isDebugEnabled()) LOG.debug("RebindManager reconstructing policy {}", policyMemento);
+                    logRebindingDebug("RebindManager reconstructing policy {}", policyMemento);
     
                     if (policy == null) {
                         // usually because of creation-failure, when not using fail-fast
-                        exceptionHandler.onPolicyNotFound(policyMemento.getId());
+                        exceptionHandler.onNotFound(BrooklynObjectType.POLICY, policyMemento.getId());
                     } else {
                         try {
                             policy.getRebindSupport().reconstruct(rebindContext, policyMemento);
                         } catch (Exception e) {
-                            exceptionHandler.onRebindPolicyFailed(policy, e);
+                            exceptionHandler.onRebindFailed(BrooklynObjectType.POLICY, policy, e);
                             rebindContext.unregisterPolicy(policy);
                         }
                     }
@@ -416,20 +775,41 @@ public class RebindManagerImpl implements RebindManager {
 
             // Reconstruct enrichers
             if (persistEnrichersEnabled) {
-                LOG.debug("RebindManager reconstructing enrichers");
+                logRebindingDebug("RebindManager reconstructing enrichers");
                 for (EnricherMemento enricherMemento : memento.getEnricherMementos().values()) {
                     Enricher enricher = rebindContext.getEnricher(enricherMemento.getId());
-                    if (LOG.isDebugEnabled()) LOG.debug("RebindManager reconstructing enricher {}", enricherMemento);
+                    logRebindingDebug("RebindManager reconstructing enricher {}", enricherMemento);
         
                     if (enricher == null) {
                         // usually because of creation-failure, when not using fail-fast
-                        exceptionHandler.onEnricherNotFound(enricherMemento.getId());
+                        exceptionHandler.onNotFound(BrooklynObjectType.ENRICHER, enricherMemento.getId());
                     } else {
                         try {
                             enricher.getRebindSupport().reconstruct(rebindContext, enricherMemento);
                         } catch (Exception e) {
-                            exceptionHandler.onRebindEnricherFailed(enricher, e);
+                            exceptionHandler.onRebindFailed(BrooklynObjectType.ENRICHER, enricher, e);
                             rebindContext.unregisterEnricher(enricher);
+                        }
+                    }
+                }
+            }
+    
+            // Reconstruct feeds
+            if (persistFeedsEnabled) {
+                logRebindingDebug("RebindManager reconstructing feeds");
+                for (FeedMemento feedMemento : memento.getFeedMementos().values()) {
+                    Feed feed = rebindContext.getFeed(feedMemento.getId());
+                    logRebindingDebug("RebindManager reconstructing feed {}", feedMemento);
+        
+                    if (feed == null) {
+                        // usually because of creation-failure, when not using fail-fast
+                        exceptionHandler.onNotFound(BrooklynObjectType.FEED, feedMemento.getId());
+                    } else {
+                        try {
+                            feed.getRebindSupport().reconstruct(rebindContext, feedMemento);
+                        } catch (Exception e) {
+                            exceptionHandler.onRebindFailed(BrooklynObjectType.FEED, feed, e);
+                            rebindContext.unregisterFeed(feed);
                         }
                     }
 
@@ -437,103 +817,189 @@ public class RebindManagerImpl implements RebindManager {
             }
     
             // Reconstruct entities
-            LOG.debug("RebindManager reconstructing entities");
+            logRebindingDebug("RebindManager reconstructing entities");
             for (EntityMemento entityMemento : sortParentFirst(memento.getEntityMementos()).values()) {
                 Entity entity = rebindContext.getEntity(entityMemento.getId());
-                if (LOG.isDebugEnabled()) LOG.debug("RebindManager reconstructing entity {}", entityMemento);
+                logRebindingDebug("RebindManager reconstructing entity {}", entityMemento);
     
                 if (entity == null) {
                     // usually because of creation-failure, when not using fail-fast
-                    exceptionHandler.onEntityNotFound(entityMemento.getId());
+                    exceptionHandler.onNotFound(BrooklynObjectType.ENTITY, entityMemento.getId());
                 } else {
                     try {
                         entityMemento.injectTypeClass(entity.getClass());
                         ((EntityInternal)entity).getRebindSupport().reconstruct(rebindContext, entityMemento);
                     } catch (Exception e) {
-                        exceptionHandler.onRebindEntityFailed(entity, e);
+                        exceptionHandler.onRebindFailed(BrooklynObjectType.ENTITY, entity, e);
                     }
                 }
             }
 
             //
-            // PHASE THREE
+            // PHASE SEVEN
             //
             
-            // Associate policies+enrichers with entities
-            LOG.debug("RebindManager reconstructing entities");
+            // Associate policies+enrichers+feeds with entities
+            logRebindingDebug("RebindManager reconstructing entities");
             for (EntityMemento entityMemento : sortParentFirst(memento.getEntityMementos()).values()) {
                 Entity entity = rebindContext.getEntity(entityMemento.getId());
-                if (LOG.isDebugEnabled()) LOG.debug("RebindManager reconstructing entity {}", entityMemento);
+                logRebindingDebug("RebindManager reconstructing entity {}", entityMemento);
     
                 if (entity == null) {
                     // usually because of creation-failure, when not using fail-fast
-                    exceptionHandler.onEntityNotFound(entityMemento.getId());
+                    exceptionHandler.onNotFound(BrooklynObjectType.ENTITY, entityMemento.getId());
                 } else {
                     try {
                         entityMemento.injectTypeClass(entity.getClass());
+                        // TODO these call to the entity which in turn sets the entity on the underlying feeds and enrichers;
+                        // that is taken as the cue to start, but it should not be. start should be a separate call.
                         ((EntityInternal)entity).getRebindSupport().addPolicies(rebindContext, entityMemento);
                         ((EntityInternal)entity).getRebindSupport().addEnrichers(rebindContext, entityMemento);
+                        ((EntityInternal)entity).getRebindSupport().addFeeds(rebindContext, entityMemento);
                     } catch (Exception e) {
-                        exceptionHandler.onRebindEntityFailed(entity, e);
+                        exceptionHandler.onRebindFailed(BrooklynObjectType.ENTITY, entity, e);
                     }
                 }
             }
             
+            
             //
-            // PHASE FOUR
+            // PHASE EIGHT
             //
 
-            LOG.debug("RebindManager managing locations");
-            for (Location location: locations.values()) {
+            logRebindingDebug("RebindManager managing locations");
+            LocationManagerInternal locationManager = (LocationManagerInternal)managementContext.getLocationManager();
+            Set<String> oldLocations = Sets.newLinkedHashSet(locationManager.getLocationIds());
+            for (Location location: rebindContext.getLocations()) {
+                ManagementTransitionMode oldMode = locationManager.getLastManagementTransitionMode(location.getId());
+                locationManager.setManagementTransitionMode(location, computeMode(location, oldMode, rebindContext.isReadOnly(location)) );
+                if (oldMode!=null)
+                    oldLocations.remove(location.getId());
+            }
+            for (Location location: rebindContext.getLocations()) {
                 if (location.getParent()==null) {
                     // manage all root locations
-                    // LocationManager.manage perhaps should not be deprecated, as we need to do this I think?
                     try {
-                        managementContext.getLocationManager().manage(location);
+                        ((LocationManagerInternal)managementContext.getLocationManager()).manageRebindedRoot(location);
                     } catch (Exception e) {
-                        exceptionHandler.onManageLocationFailed(location, e);
+                        exceptionHandler.onManageFailed(BrooklynObjectType.LOCATION, location, e);
                     }
                 }
+            }
+            // destroy old
+            for (String oldLocationId: oldLocations) {
+               locationManager.unmanage(locationManager.getLocation(oldLocationId), ManagementTransitionMode.REBINDING_DESTROYED); 
             }
             
             // Manage the top-level apps (causing everything under them to become managed)
-            LOG.debug("RebindManager managing entities");
+            logRebindingDebug("RebindManager managing entities");
+            EntityManagerInternal entityManager = (EntityManagerInternal)managementContext.getEntityManager();
+            Set<String> oldEntities = Sets.newLinkedHashSet(entityManager.getEntityIds());
+            for (Entity entity: rebindContext.getEntities()) {
+                ManagementTransitionMode oldMode = entityManager.getLastManagementTransitionMode(entity.getId());
+                entityManager.setManagementTransitionMode(entity, computeMode(entity, oldMode, rebindContext.isReadOnly(entity)) );
+                if (oldMode!=null)
+                    oldEntities.remove(entity.getId());
+            }
             List<Application> apps = Lists.newArrayList();
             for (String appId : memento.getApplicationIds()) {
                 Entity entity = rebindContext.getEntity(appId);
                 if (entity == null) {
                     // usually because of creation-failure, when not using fail-fast
-                    exceptionHandler.onEntityNotFound(appId);
+                    exceptionHandler.onNotFound(BrooklynObjectType.ENTITY, appId);
                 } else {
                     try {
-                        Entities.startManagement((Application)entity, managementContext);
+                        entityManager.manageRebindedRoot(entity);
                     } catch (Exception e) {
-                        exceptionHandler.onManageEntityFailed(entity, e);
+                        exceptionHandler.onManageFailed(BrooklynObjectType.ENTITY, entity, e);
                     }
                     apps.add((Application)entity);
                 }
             }
-            
+            // destroy old
+            for (String oldEntityId: oldEntities) {
+               entityManager.unmanage(entityManager.getEntity(oldEntityId), ManagementTransitionMode.REBINDING_DESTROYED); 
+            }
+
             exceptionHandler.onDone();
 
-            LOG.info("Rebind complete: {} app{}, {} entit{}, {} location{}, {} polic{}, {} enricher{}", new Object[]{
-                apps.size(), Strings.s(apps),
-                entities.size(), Strings.ies(entities),
-                locations.size(), Strings.s(locations),
-                policies.size(), Strings.ies(policies),
-                enrichers.size(), Strings.s(enrichers) });
+            if (!isEmpty) {
+                BrooklynLogging.log(LOG, shouldLogRebinding() ? LoggingLevel.INFO : LoggingLevel.DEBUG, 
+                    "Rebind complete " + "("+mode+(readOnlyRebindCount>=0 ? ", iteration "+readOnlyRebindCount : "")+")" +
+                        " in {}: {} app{}, {} entit{}, {} location{}, {} polic{}, {} enricher{}, {} feed{}, {} catalog item{}", new Object[]{
+                    Time.makeTimeStringRounded(timer), apps.size(), Strings.s(apps),
+                    rebindContext.getEntities().size(), Strings.ies(rebindContext.getEntities()),
+                    rebindContext.getLocations().size(), Strings.s(rebindContext.getLocations()),
+                    rebindContext.getPolicies().size(), Strings.ies(rebindContext.getPolicies()),
+                    rebindContext.getEnrichers().size(), Strings.s(rebindContext.getEnrichers()),
+                    rebindContext.getFeeds().size(), Strings.s(rebindContext.getFeeds()),
+                    rebindContext.getCatalogItems().size(), Strings.s(rebindContext.getCatalogItems())
+                });
+            }
 
             // Return the top-level applications
-            LOG.debug("RebindManager complete; return apps: {}", memento.getApplicationIds());
+            logRebindingDebug("RebindManager complete; apps: {}", memento.getApplicationIds());
             return apps;
-            
-        } catch (RuntimeException e) {
+
+        } catch (Exception e) {
             throw exceptionHandler.onFailed(e);
         } finally {
+            rebindActive.release();
             RebindTracker.reset();
         }
     }
     
+    private String findCatalogItemId(Map<String, EntityMementoManifest> entityIdToManifest, EntityMementoManifest entityManifest) {
+        EntityMementoManifest ptr = entityManifest;
+        while (ptr != null) {
+            if (ptr.getCatalogItemId() != null) {
+                return ptr.getCatalogItemId();
+            }
+            if (ptr.getParent() != null) {
+                ptr = entityIdToManifest.get(ptr.getParent());
+            } else {
+                ptr = null;
+            }
+        }
+        return null;
+    }
+
+    private BrooklynClassLoadingContext getLoadingContextFromCatalogItemId(String catalogItemId, ClassLoader classLoader, RebindContext rebindContext) {
+        if (catalogItemId != null) {
+            CatalogItem<?, ?> catalogItem = rebindContext.getCatalogItem(catalogItemId);
+            if (catalogItem != null) {
+                return CatalogUtils.newClassLoadingContext(managementContext, catalogItem);
+            } else {
+                throw new IllegalStateException("Failed to load catalog item " + catalogItemId + " required for rebinding.");
+            }
+        } else {
+            return JavaBrooklynClassLoadingContext.create(managementContext, classLoader);
+        }
+    }
+
+    static ManagementTransitionMode computeMode(BrooklynObject item, ManagementTransitionMode oldMode, boolean isNowReadOnly) {
+        return computeMode(item, oldMode==null ? null : oldMode.wasReadOnly(), isNowReadOnly);
+    }
+
+    static ManagementTransitionMode computeMode(BrooklynObject item, Boolean wasReadOnly, boolean isNowReadOnly) {
+        if (wasReadOnly==null) {
+            // not known
+            if (Boolean.TRUE.equals(isNowReadOnly)) return ManagementTransitionMode.REBINDING_READONLY;
+            else return ManagementTransitionMode.CREATING;
+        } else {
+            if (wasReadOnly && isNowReadOnly)
+                return ManagementTransitionMode.REBINDING_READONLY;
+            else if (wasReadOnly)
+                return ManagementTransitionMode.REBINDING_BECOMING_PRIMARY;
+            else if (isNowReadOnly)
+                return ManagementTransitionMode.REBINDING_NO_LONGER_PRIMARY;
+            else {
+                LOG.warn("Transitioning to master, though never stopped being a master - " + item);
+                return ManagementTransitionMode.REBINDING_BECOMING_PRIMARY;
+            }
+        }
+    }
+
     /**
      * Sorts the map of nodes, so that a node's parent is guaranteed to come before that node
      * (unless the parent is missing).
@@ -546,9 +1012,7 @@ public class RebindManagerImpl implements RebindManager {
     @VisibleForTesting
     <T extends TreeNode> Map<String, T> sortParentFirst(Map<String, T> nodes) {
         Map<String, T> result = Maps.newLinkedHashMap();
-        for (Map.Entry<String, T> entry : nodes.entrySet()) {
-            String id = entry.getKey();
-            T node = entry.getValue();
+        for (T node : nodes.values()) {
             List<T> tempchain = Lists.newLinkedList();
             
             T nodeinchain = node;
@@ -563,44 +1027,14 @@ public class RebindManagerImpl implements RebindManager {
         return result;
     }
 
-    private Entity newEntity(String entityId, String entityType, Reflections reflections) {
-        Class<? extends Entity> entityClazz = (Class<? extends Entity>) reflections.loadClass(entityType);
+    private Entity newEntity(String entityId, String entityType, BrooklynClassLoadingContext loader) {
+        Class<? extends Entity> entityClazz = loader.loadClass(entityType, Entity.class);
         
-        if (InternalEntityFactory.isNewStyleEntity(managementContext, entityClazz)) {
-            // Not using entityManager.createEntity(EntitySpec) because don't want init() to be called
-            // TODO Need to rationalise this to move code into methods of InternalEntityFactory.
-            //      The InternalEntityFactory.constructEntity is used in three places:
-            //       1. normal entity creation (through entityManager.createEntity)
-            //       2. rebind (i.e. here)
-            //       3. yaml parsing
-            //      Purpose is to create a new (unconfigured/uninitialised) entity, but that is
-            //      known about by the managementContext and that has things like the right id and 
-            //      a proxy for if another entity needs to reference it during the init phase.
+        if (InternalFactory.isNewStyle(entityClazz)) {
+            // Not using entityManager.createEntity(EntitySpec) because don't want init() to be called.
+            // Creates an uninitialized entity, but that has correct id + proxy.
             InternalEntityFactory entityFactory = managementContext.getEntityFactory();
-            Entity entity = entityFactory.constructEntity(entityClazz);
-            FlagUtils.setFieldsFromFlags(ImmutableMap.of("id", entityId), entity);
-            if (entity instanceof AbstractApplication) {
-                FlagUtils.setFieldsFromFlags(ImmutableMap.of("mgmt", managementContext), entity);
-            }
-            managementContext.prePreManage(entity);
-            ((AbstractEntity)entity).setManagementContext(managementContext);
-            
-            Class<?> entityInterface;
-            List<Class<?>> additionalInterfaces;
-            try {
-                entityInterface = managementContext.getEntityManager().getEntityTypeRegistry().getEntityTypeOf((Class)entityClazz);
-                additionalInterfaces = Reflections.getAllInterfaces(entityClazz);
-            } catch (IllegalArgumentException e) {
-                // TODO this can happen if it's an app with no annotation, for example; not nice catching exception
-                entityInterface = Entity.class;
-                additionalInterfaces = Reflections.getAllInterfaces(entityClazz);
-            }
-            EntitySpec<Entity> entitySpec = EntitySpec.create((Class)entityInterface)
-                    .additionalInterfaces(additionalInterfaces)
-                    .impl((Class)entityClazz)
-                    .id(entityId);
-
-            ((AbstractEntity)entity).setProxy(entityFactory.createEntityProxy(entitySpec, entity));
+            Entity entity = entityFactory.constructEntity(entityClazz, Reflections.getAllInterfaces(entityClazz), entityId);
             
             return entity;
 
@@ -617,7 +1051,7 @@ public class RebindManagerImpl implements RebindManager {
 
             // TODO document the multiple sources of flags, and the reason for setting the mgmt context *and* supplying it as the flag
             // (NB: merge reported conflict as the two things were added separately)
-            Entity entity = (Entity) invokeConstructor(reflections, entityClazz, new Object[] {flags}, new Object[] {flags, null}, new Object[] {null}, new Object[0]);
+            Entity entity = (Entity) invokeConstructor(null, entityClazz, new Object[] {flags}, new Object[] {flags, null}, new Object[] {null}, new Object[0]);
             
             // In case the constructor didn't take the Map arg, then also set it here.
             // e.g. for top-level app instances such as WebClusterDatabaseExampleApp will (often?) not have
@@ -639,9 +1073,9 @@ public class RebindManagerImpl implements RebindManager {
      * Constructs a new location, passing to its constructor the location id and all of memento.getFlags().
      */
     private Location newLocation(String locationId, String locationType, Reflections reflections) {
-        Class<? extends Location> locationClazz = (Class<? extends Location>) reflections.loadClass(locationType);
+        Class<? extends Location> locationClazz = reflections.loadClass(locationType, Location.class);
 
-        if (InternalLocationFactory.isNewStyleLocation(managementContext, locationClazz)) {
+        if (InternalFactory.isNewStyle(locationClazz)) {
             // Not using loationManager.createLocation(LocationSpec) because don't want init() to be called
             // TODO Need to rationalise this to move code into methods of InternalLocationFactory.
             //      But note that we'll change all locations to be entities at some point!
@@ -669,12 +1103,12 @@ public class RebindManagerImpl implements RebindManager {
     /**
      * Constructs a new policy, passing to its constructor the policy id and all of memento.getConfig().
      */
-    private Policy newPolicy(PolicyMemento memento, Reflections reflections) {
+    private Policy newPolicy(PolicyMemento memento, BrooklynClassLoadingContext loader) {
         String id = memento.getId();
         String policyType = checkNotNull(memento.getType(), "policy type of %s must not be null in memento", id);
-        Class<? extends Policy> policyClazz = (Class<? extends Policy>) reflections.loadClass(policyType);
+        Class<? extends Policy> policyClazz = loader.loadClass(policyType, Policy.class);
 
-        if (InternalPolicyFactory.isNewStylePolicy(policyClazz)) {
+        if (InternalFactory.isNewStyle(policyClazz)) {
             InternalPolicyFactory policyFactory = managementContext.getPolicyFactory();
             Policy policy = policyFactory.constructPolicy(policyClazz);
             FlagUtils.setFieldsFromFlags(ImmutableMap.of("id", id), policy);
@@ -694,7 +1128,7 @@ public class RebindManagerImpl implements RebindManager {
                     "noConstructionInit", true);
             flags.putAll(memento.getConfig());
 
-            return (Policy) invokeConstructor(reflections, policyClazz, new Object[] {flags});
+            return (Policy) invokeConstructor(null, policyClazz, new Object[] {flags});
         }
     }
 
@@ -704,9 +1138,9 @@ public class RebindManagerImpl implements RebindManager {
     private Enricher newEnricher(EnricherMemento memento, Reflections reflections) {
         String id = memento.getId();
         String enricherType = checkNotNull(memento.getType(), "enricher type of %s must not be null in memento", id);
-        Class<? extends Enricher> enricherClazz = (Class<? extends Enricher>) reflections.loadClass(enricherType);
+        Class<? extends Enricher> enricherClazz = reflections.loadClass(enricherType, Enricher.class);
 
-        if (InternalPolicyFactory.isNewStyleEnricher(enricherClazz)) {
+        if (InternalFactory.isNewStyle(enricherClazz)) {
             InternalPolicyFactory policyFactory = managementContext.getPolicyFactory();
             Enricher enricher = policyFactory.constructEnricher(enricherClazz);
             FlagUtils.setFieldsFromFlags(ImmutableMap.of("id", id), enricher);
@@ -728,9 +1162,37 @@ public class RebindManagerImpl implements RebindManager {
 
             return (Enricher) invokeConstructor(reflections, enricherClazz, new Object[] {flags});
         }
-
     }
 
+    /**
+     * Constructs a new enricher, passing to its constructor the enricher id and all of memento.getConfig().
+     */
+    private Feed newFeed(FeedMemento memento, Reflections reflections) {
+        String id = memento.getId();
+        String feedType = checkNotNull(memento.getType(), "feed type of %s must not be null in memento", id);
+        Class<? extends Feed> feedClazz = reflections.loadClass(feedType, Feed.class);
+
+        if (InternalFactory.isNewStyle(feedClazz)) {
+            InternalPolicyFactory policyFactory = managementContext.getPolicyFactory();
+            Feed feed = policyFactory.constructFeed(feedClazz);
+            FlagUtils.setFieldsFromFlags(ImmutableMap.of("id", id), feed);
+            ((AbstractFeed)feed).setManagementContext(managementContext);
+            
+            return feed;
+
+        } else {
+            throw new IllegalStateException("rebind of feed without no-arg constructor unsupported: id="+id+"; type="+feedType);
+        }
+    }
+
+    @SuppressWarnings({ "rawtypes" })
+    private CatalogItem<?, ?> newCatalogItem(CatalogItemMemento memento, Reflections reflections) {
+        String id = memento.getId();
+        String itemType = checkNotNull(memento.getType(), "catalog item type of %s must not be null in memento", id);
+        Class<? extends CatalogItem> clazz = reflections.loadClass(itemType, CatalogItem.class);
+        return invokeConstructor(reflections, clazz, new Object[]{});
+    }
+    
     private <T> T invokeConstructor(Reflections reflections, Class<T> clazz, Object[]... possibleArgs) {
         for (Object[] args : possibleArgs) {
             try {
@@ -745,20 +1207,6 @@ public class RebindManagerImpl implements RebindManager {
         throw new IllegalStateException("Cannot instantiate instance of type "+clazz+"; expected constructor signature not found");
     }
 
-    private static boolean isNewStylePolicy(Class<?> clazz) {
-        if (!Policy.class.isAssignableFrom(clazz)) {
-            throw new IllegalArgumentException("Class "+clazz+" is not a policy");
-        }
-        return Reflections.hasNoArgConstructor(clazz);
-    }
-    
-    private static boolean isNewStyleEnricher(Class<?> clazz) {
-        if (!Enricher.class.isAssignableFrom(clazz)) {
-            throw new IllegalArgumentException("Class "+clazz+" is not an enricher");
-        }
-        return Reflections.hasNoArgConstructor(clazz);
-    }
-    
     /**
      * Wraps a ChangeListener, to log and never propagate any exceptions that it throws.
      * 
@@ -777,111 +1225,48 @@ public class RebindManagerImpl implements RebindManager {
         }
         
         @Override
-        public void onManaged(Entity entity) {
+        public void onManaged(BrooklynObject instance) {
             try {
-                delegate.onManaged(entity);
+                delegate.onManaged(instance);
             } catch (Throwable t) {
-                LOG.error("Error persisting mememento onManaged("+entity+"); continuing.", t);
+                LOG.error("Error persisting mememento onManaged("+instance+"); continuing.", t);
             }
         }
 
         @Override
-        public void onManaged(Location location) {
+        public void onChanged(BrooklynObject instance) {
             try {
-                delegate.onManaged(location);
+                delegate.onChanged(instance);
             } catch (Throwable t) {
-                LOG.error("Error persisting mememento onManaged("+location+"); continuing.", t);
+                LOG.error("Error persisting mememento onChanged("+instance+"); continuing.", t);
             }
         }
         
         @Override
-        public void onManaged(Policy policy) {
+        public void onUnmanaged(BrooklynObject instance) {
             try {
-                delegate.onManaged(policy);
+                delegate.onUnmanaged(instance);
             } catch (Throwable t) {
-                LOG.error("Error persisting mememento onManaged("+policy+"); continuing.", t);
+                LOG.error("Error persisting mememento onUnmanaged("+instance+"); continuing.", t);
             }
         }
+    }
 
-        @Override
-        public void onManaged(Enricher enricher) {
-            try {
-                delegate.onManaged(enricher);
-            } catch (Throwable t) {
-                LOG.error("Error persisting mememento onManaged("+enricher+"); continuing.", t);
-            }
+    /** logs at debug, except during subsequent read-only rebinds, in which it logs trace */
+    private void logRebindingDebug(String message, Object... args) {
+        if (shouldLogRebinding()) {
+            LOG.debug(message, args);
+        } else {
+            LOG.trace(message, args);
         }
+    }
+    
+    protected boolean shouldLogRebinding() {
+        return (readOnlyRebindCount < 5) || (readOnlyRebindCount%1000==0);
+    }
 
-        @Override
-        public void onChanged(Entity entity) {
-            try {
-                delegate.onChanged(entity);
-            } catch (Throwable t) {
-                LOG.error("Error persisting mememento onChanged("+entity+"); continuing.", t);
-            }
-        }
-        
-        @Override
-        public void onUnmanaged(Entity entity) {
-            try {
-                delegate.onUnmanaged(entity);
-            } catch (Throwable t) {
-                LOG.error("Error persisting mememento onUnmanaged("+entity+"); continuing.", t);
-            }
-        }
-
-        @Override
-        public void onUnmanaged(Location location) {
-            try {
-                delegate.onUnmanaged(location);
-            } catch (Throwable t) {
-                LOG.error("Error persisting mememento onUnmanaged("+location+"); continuing.", t);
-            }
-        }
-
-        @Override
-        public void onUnmanaged(Policy policy) {
-            try {
-                delegate.onUnmanaged(policy);
-            } catch (Throwable t) {
-                LOG.error("Error persisting mememento onUnmanaged("+policy+"); continuing.", t);
-            }
-        }
-
-        @Override
-        public void onUnmanaged(Enricher enricher) {
-            try {
-                delegate.onUnmanaged(enricher);
-            } catch (Throwable t) {
-                LOG.error("Error persisting mememento onUnmanaged("+enricher+"); continuing.", t);
-            }
-        }
-
-        @Override
-        public void onChanged(Location location) {
-            try {
-                delegate.onChanged(location);
-            } catch (Throwable t) {
-                LOG.error("Error persisting mememento onChanged("+location+"); continuing.", t);
-            }
-        }
-        
-        @Override
-        public void onChanged(Policy policy) {
-            try {
-                delegate.onChanged(policy);
-            } catch (Throwable t) {
-                LOG.error("Error persisting mememento onChanged("+policy+"); continuing.", t);
-            }
-        }
-        
-        @Override
-        public void onChanged(Enricher enricher) {
-            try {
-                delegate.onChanged(enricher);
-            } catch (Throwable t) {
-                LOG.error("Error persisting mememento onChanged("+enricher+"); continuing.", t);
-            }
-        }
+    @Override
+    public String toString() {
+        return super.toString()+"[mgmt="+managementContext.getManagementNodeId()+"]";
     }
 }

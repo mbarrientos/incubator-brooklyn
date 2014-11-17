@@ -57,8 +57,10 @@ import brooklyn.management.ManagementContext;
 import brooklyn.management.internal.ManagementContextInternal;
 import brooklyn.rest.BrooklynRestApi;
 import brooklyn.rest.BrooklynWebConfig;
-import brooklyn.rest.security.BrooklynPropertiesSecurityFilter;
-import brooklyn.rest.util.HaMasterCheckFilter;
+import brooklyn.rest.filter.BrooklynPropertiesSecurityFilter;
+import brooklyn.rest.filter.HaMasterCheckFilter;
+import brooklyn.rest.filter.LoggingFilter;
+import brooklyn.rest.filter.RequestTaggingFilter;
 import brooklyn.util.BrooklynLanguageExtensions;
 import brooklyn.util.BrooklynNetworkUtils;
 import brooklyn.util.ResourceUtils;
@@ -76,13 +78,14 @@ import brooklyn.util.text.Identifiers;
 import brooklyn.util.text.Strings;
 import brooklyn.util.web.ContextHandlerCollectionHotSwappable;
 
-import com.google.common.annotations.VisibleForTesting;
-import com.google.common.base.Throwables;
-import com.google.common.collect.Maps;
 import com.sun.jersey.api.container.filter.GZIPContentEncodingFilter;
 import com.sun.jersey.api.core.DefaultResourceConfig;
 import com.sun.jersey.api.core.ResourceConfig;
 import com.sun.jersey.spi.container.servlet.ServletContainer;
+
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Throwables;
+import com.google.common.collect.Maps;
 
 /**
  * Starts the web-app running, connected to the given management context
@@ -106,8 +109,12 @@ public class BrooklynWebServer {
 
     private WebAppContext rootContext;
     
+    /** base port to use, for http if enabled or else https; if not set, it uses httpPort or httpsPort */
+    @SetFromFlag("port")
+    protected PortRange requestedPort = null;
+    
     @SetFromFlag
-    protected PortRange port = PortRanges.fromString("8081+");
+    protected PortRange httpPort = PortRanges.fromString("8081+");
     @SetFromFlag
     protected PortRange httpsPort = PortRanges.fromString("8443+");
     
@@ -126,9 +133,9 @@ public class BrooklynWebServer {
     @SetFromFlag
     protected InetAddress bindAddress = null;
 
-    /** The URI that this server's management context will be publically available on. */
+    /** The address that this server's management context will be publically available on. */
     @SetFromFlag
-    protected URI publicAddress = null;
+    protected InetAddress publicAddress = null;
 
     /**
      * map of context-prefix to file
@@ -203,7 +210,7 @@ public class BrooklynWebServer {
     public BrooklynWebServer setPort(Object port) {
         if (getActualPort()>0)
             throw new IllegalStateException("Can't set port after port has been assigned to server (using "+getActualPort()+")");
-        this.port = TypeCoercions.coerce(port, PortRange.class);
+        this.requestedPort = TypeCoercions.coerce(port, PortRange.class);
         return this;
     }
 
@@ -219,7 +226,7 @@ public class BrooklynWebServer {
     }
     
     public PortRange getRequestedPort() {
-        return port;
+        return requestedPort;
     }
     
     /** returns port where this is running, or -1 if not yet known */
@@ -235,7 +242,7 @@ public class BrooklynWebServer {
     
     /** URL for accessing this web server (root context) */
     public String getRootUrl() {
-        String address = (publicAddress != null) ? publicAddress.toString() : getAddress().getHostName();
+        String address = (publicAddress != null) ? publicAddress.getHostName() : getAddress().getHostName();
         if (getActualPort()>0){
             String protocol = getHttpsEnabled()?"https":"http";
             return protocol+"://"+address+":"+getActualPort()+"/";
@@ -268,7 +275,7 @@ public class BrooklynWebServer {
     /**
      * Sets the public address that the server's management context's REST API will be available on
      */
-    public BrooklynWebServer setPublicAddress(URI address) {
+    public BrooklynWebServer setPublicAddress(InetAddress address) {
         publicAddress = address;
         return this;
     }
@@ -322,20 +329,23 @@ public class BrooklynWebServer {
      * Starts the embedded web application server.
      */
     public synchronized void start() throws Exception {
-        if (server!=null) throw new IllegalStateException(""+this+" already running");
+        if (server != null) throw new IllegalStateException(""+this+" already running");
 
-        if (actualPort==-1){
-            actualPort = LocalhostMachineProvisioningLocation.obtainPort(getAddress(), getHttpsEnabled()?httpsPort:port);
+        if (actualPort == -1){
+            PortRange portRange = requestedPort;
+            if (portRange==null) {
+                portRange = getHttpsEnabled()? httpsPort : httpPort;
+            }
+            actualPort = LocalhostMachineProvisioningLocation.obtainPort(getAddress(), portRange);
             if (actualPort == -1) 
-                throw new IllegalStateException("Unable to provision port for web console (wanted "+(getHttpsEnabled()?httpsPort:port)+")");
+                throw new IllegalStateException("Unable to provision port for web console (wanted "+portRange+")");
         }
 
-        if (bindAddress!=null) {
-            actualAddress = bindAddress;
-            server = new Server(new InetSocketAddress(bindAddress, actualPort));
-        } else {
+        server = new Server(new InetSocketAddress(bindAddress, actualPort));
+        if (bindAddress == null || bindAddress.equals(InetAddress.getByAddress(new byte[] { 0, 0, 0, 0 }))) {
             actualAddress = BrooklynNetworkUtils.getLocalhostInetAddress();
-            server = new Server(actualPort);
+        } else {
+            actualAddress = bindAddress;
         }
 
         // use a nice name in the thread pool (otherwise this is exactly the same as Server defaults)
@@ -414,9 +424,11 @@ public class BrooklynWebServer {
         rootContext = deploy("/", rootWar);
         rootContext.setTempDirectory(Os.mkdirs(new File(webappTempDir, "war-root")));
 
+        rootContext.addFilter(RequestTaggingFilter.class, "/*", EnumSet.allOf(DispatcherType.class));
         if (securityFilterClazz != null) {
             rootContext.addFilter(securityFilterClazz, "/*", EnumSet.allOf(DispatcherType.class));
         }
+        rootContext.addFilter(LoggingFilter.class, "/*", EnumSet.allOf(DispatcherType.class));
         rootContext.addFilter(HaMasterCheckFilter.class, "/*", EnumSet.allOf(DispatcherType.class));
         installAsServletFilter(rootContext);
 
@@ -449,7 +461,7 @@ public class BrooklynWebServer {
     public synchronized void stop() throws Exception {
         if (server==null) return;
         String root = getRootUrl();
-        Threads.removeShutdownHook(shutdownHook);
+        if (shutdownHook != null) Threads.removeShutdownHook(shutdownHook);
         if (log.isDebugEnabled())
             log.debug("Stopping Brooklyn web console at "+root+ " (" + war + (wars != null ? " and " + wars.values() : "") + ")");
 

@@ -38,43 +38,46 @@ import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
 
+import brooklyn.entity.Entity;
 import brooklyn.util.ResourceUtils;
 import brooklyn.util.collections.MutableSet;
+import brooklyn.util.maven.MavenArtifact;
+import brooklyn.util.maven.MavenRetriever;
+import brooklyn.util.net.Urls;
 import brooklyn.util.os.Os;
 import brooklyn.util.osgi.Osgis;
 import brooklyn.util.osgi.Osgis.ManifestHelper;
 import brooklyn.util.stream.Streams;
 
-/** tests some assumptions about OSGi behaviour, in standalone mode (not part of brooklyn).
- * 
- * relies on the following bundles, which exist in the classpath (and contain their sources):
- * 
- * <li>brooklyn-osgi-test-a_0.1.0 -
- *     defines TestA which has a "times" method and a static multiplier field;
- *     we set the multiplier to determine when we are sharing versions and when not
- *     
- *  */
+/** 
+ * Tests some assumptions about OSGi behaviour, in standalone mode (not part of brooklyn).
+ * See {@link OsgiTestResources} for description of test resources.
+ */
 public class OsgiStandaloneTest {
 
-
     private static final Logger log = LoggerFactory.getLogger(OsgiStandaloneTest.class);
-    
-    public static final String BROOKLYN_OSGI_TEST_A_0_1_0_URL = "classpath:/brooklyn/osgi/brooklyn-osgi-test-a_0.1.0.jar";
-    
-    public static final String BROOKLYN_TEST_OSGI_ENTITIES_PATH = "/brooklyn/osgi/brooklyn-test-osgi-entities.jar";
+
+    public static final String BROOKLYN_OSGI_TEST_A_0_1_0_PATH = OsgiTestResources.BROOKLYN_OSGI_TEST_A_0_1_0_PATH;
+    public static final String BROOKLYN_OSGI_TEST_A_0_1_0_URL = "classpath:"+BROOKLYN_OSGI_TEST_A_0_1_0_PATH;
+
+    public static final String BROOKLYN_TEST_OSGI_ENTITIES_PATH = OsgiTestResources.BROOKLYN_TEST_OSGI_ENTITIES_PATH;
     public static final String BROOKLYN_TEST_OSGI_ENTITIES_URL = "classpath:"+BROOKLYN_TEST_OSGI_ENTITIES_PATH;
-    
+
     protected Framework framework = null;
     private File storageTempDir;
 
-    @BeforeMethod
+    @BeforeMethod(alwaysRun=true)
     public void setUp() throws Exception {
         storageTempDir = Os.newTempDir("osgi-standalone");
         framework = Osgis.newFrameworkStarted(storageTempDir.getAbsolutePath(), true, null);
     }
 
-    @AfterMethod
+    @AfterMethod(alwaysRun=true)
     public void tearDown() throws BundleException, IOException, InterruptedException {
+        tearDownOsgiFramework(framework, storageTempDir);
+    }
+
+    public static void tearDownOsgiFramework(Framework framework, File storageTempDir) throws BundleException, InterruptedException, IOException {
         if (framework!=null) {
             framework.stop();
             Assert.assertEquals(framework.waitForStop(1000).getType(), FrameworkEvent.STOPPED);
@@ -93,11 +96,43 @@ public class OsgiStandaloneTest {
             throw new IllegalStateException("test resources not available; may be an IDE issue, so try a mvn rebuild of this project", e);
         }
     }
-    
+
     @Test
     public void testInstallBundle() throws Exception {
         Bundle bundle = install(BROOKLYN_OSGI_TEST_A_0_1_0_URL);
         checkMath(bundle, 3, 6);
+    }
+
+    @Test
+    public void testBootBundle() throws Exception {
+        Bundle bundle = install(BROOKLYN_TEST_OSGI_ENTITIES_PATH);
+        Class<?> bundleCls = bundle.loadClass("brooklyn.osgi.tests.SimpleEntity");
+        Assert.assertEquals(Entity.class,  bundle.loadClass(Entity.class.getName()));
+        Assert.assertEquals(Entity.class, bundleCls.getClassLoader().loadClass(Entity.class.getName()));
+    }
+
+    @Test
+    public void testDuplicateBundle() throws Exception {
+        MavenArtifact artifact = new MavenArtifact("org.apache.brooklyn", "brooklyn-api", "jar", "0.7.0-SNAPSHOT"); // BROOKLYN_VERSION
+        String localUrl = MavenRetriever.localUrl(artifact);
+        if ("file".equals(Urls.getProtocol(localUrl))) {
+            helperDuplicateBundle(localUrl);
+        } else {
+            log.warn("Skipping test OsgiStandaloneTest.testDuplicateBundle due to " + artifact + " not available in local repo.");
+        }
+    }
+
+    @Test(groups="Integration")
+    public void testRemoteDuplicateBundle() throws Exception {
+        helperDuplicateBundle(MavenRetriever.hostedUrl(new MavenArtifact("org.apache.brooklyn", "brooklyn-api", "jar", "0.7.0-SNAPSHOT"))); // BROOKLYN_VERSION
+    }
+
+    public void helperDuplicateBundle(String url) throws Exception {
+        //The bundle is already installed from the boot path.
+        //Make sure that we still get the initially loaded
+        //bundle after trying to install the same version.
+        Bundle bundle = install(url);
+        Assert.assertTrue(Osgis.isExtensionBundle(bundle));
     }
 
     @Test

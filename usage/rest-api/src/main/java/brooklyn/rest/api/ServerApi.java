@@ -27,17 +27,19 @@ import javax.ws.rs.Path;
 import javax.ws.rs.Produces;
 import javax.ws.rs.core.MediaType;
 
+import brooklyn.management.ha.HighAvailabilityMode;
+import brooklyn.management.ha.ManagementNodeState;
 import brooklyn.rest.apidoc.Apidoc;
 import brooklyn.rest.domain.HighAvailabilitySummary;
+import brooklyn.rest.domain.VersionSummary;
 
 import com.google.common.annotations.Beta;
 import com.wordnik.swagger.core.ApiOperation;
+import com.wordnik.swagger.core.ApiParam;
 
 @Path("/v1/server")
 @Apidoc("Server")
 @Produces(MediaType.APPLICATION_JSON)
-@Consumes(MediaType.APPLICATION_JSON)
-
 @Beta
 public interface ServerApi {
 
@@ -51,25 +53,72 @@ public interface ServerApi {
     @ApiOperation(value = "Terminate this Brooklyn server instance")
     @Consumes({MediaType.APPLICATION_FORM_URLENCODED})
     public void shutdown(
+        @ApiParam(name = "stopAppsFirst", value = "Whether to stop running applications before shutting down")
         @FormParam("stopAppsFirst") @DefaultValue("false") boolean stopAppsFirst,
-        @FormParam("delayMillis") @DefaultValue("250") long delayMillis);
+        @ApiParam(name = "forceShutdownOnError", value ="Force shutdown if apps fail to stop or timeout")
+        @FormParam("forceShutdownOnError") @DefaultValue("false") boolean forceShutdownOnError,
+        @ApiParam(name = "shutdownTimeout", value = "A maximum delay to wait for apps to gracefully stop before giving up or forcibly exiting, 0 to wait infinitely")
+        @FormParam("shutdownTimeout") @DefaultValue("20s") String shutdownTimeout,
+        @ApiParam(name = "requestTimeout", value = "Maximum time to block the request for the shutdown to finish, 0 to wait infinitely")
+        @FormParam("requestTimeout") @DefaultValue("20s") String requestTimeout,
+        @ApiParam(name = "delayForHttpReturn", value = "The delay before exiting the process, to permit the REST response to be returned")
+        @FormParam("delayForHttpReturn") @DefaultValue("5s") String delayForHttpReturn,
+        @ApiParam(name = "delayMillis", value = "Deprecated, analogous to delayForHttpReturn")
+        @FormParam("delayMillis") Long delayMillis);
 
     @GET
     @Path("/version")
     @ApiOperation(value = "Return version identifier information for this Brooklyn instance", responseClass = "String", multiValueResponse = false)
-    public String getVersion();
+    public VersionSummary getVersion();
 
+    @Deprecated /** @deprecated since 0.7.0 use /ha/node (which returns correct JSON) */
     @GET
     @Path("/status")
-    @ApiOperation(value = "Returns the status of this Brooklyn instance",
+    @ApiOperation(value = "Returns the status of this Brooklyn instance [DEPRECATED; see ../ha/state]",
         responseClass = "String",
         multiValueResponse = false)
     public String getStatus();
 
+    @Deprecated /** @deprecated since 0.7.0 use /ha/states */
     @GET
     @Path("/highAvailability")
-    @ApiOperation(value = "Fetches the status of all Brooklyn instances in the management plane",
+    @ApiOperation(value = "Returns the status of all Brooklyn instances in the management plane [DEPRECATED; see ../ha/states]",
         responseClass = "brooklyn.rest.domain.HighAvailabilitySummary")
     public HighAvailabilitySummary getHighAvailability();
+    
+    @GET
+    @Path("/ha/state")
+    @ApiOperation(value = "Returns the HA state of this management node")
+    public ManagementNodeState getHighAvailabilityNodeState();
+    
+    @POST
+    @Path("/ha/state")
+    @ApiOperation(value = "Changes the HA state of this management node")
+    public ManagementNodeState setHighAvailabilityNodeState(
+            @ApiParam(name = "state", value = "The state to change to")
+            @FormParam("mode") HighAvailabilityMode mode);
+
+    @GET
+    @Path("/ha/states")
+    @ApiOperation(value = "Returns the HA states and detail for all nodes in this management plane",
+        responseClass = "brooklyn.rest.domain.HighAvailabilitySummary")
+    public HighAvailabilitySummary getHighAvailabilityPlaneStates();
+
+    @GET
+    @Path("/ha/priority")
+    @ApiOperation(value = "Returns the HA node priority for MASTER failover")
+    public long getHighAvailabitlityPriority();
+    
+    @POST
+    @Path("/ha/priority")
+    @ApiOperation(value = "Sets the HA node priority for MASTER failover")
+    public long setHighAvailabilityPriority(
+            @ApiParam(name = "priority", value = "The priority to be set")
+            @FormParam("priority") long priority);
+
+    @GET
+    @Path("/user")
+    @ApiOperation(value = "Return user information for this Brooklyn instance", responseClass = "String", multiValueResponse = false)
+    public String getUser(); 
 
 }

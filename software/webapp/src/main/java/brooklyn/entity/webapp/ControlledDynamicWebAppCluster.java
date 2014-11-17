@@ -18,6 +18,7 @@
  */
 package brooklyn.entity.webapp;
 
+import brooklyn.catalog.Catalog;
 import brooklyn.config.ConfigKey;
 import brooklyn.entity.Entity;
 import brooklyn.entity.Group;
@@ -56,9 +57,11 @@ import brooklyn.util.flags.SetFromFlag;
  * than with the child {@link brooklyn.entity.group.DynamicCluster}. However, note that changing this entity's
  * members has no effect on the members of the underlying DynamicCluster - treat this as a read-only view.
  */
+@Catalog(name="Controlled Dynamic Web-app Cluster", description="A cluster of load-balanced web-apps, which can be dynamically re-sized")
 @ImplementedBy(ControlledDynamicWebAppClusterImpl.class)
-public interface ControlledDynamicWebAppCluster extends DynamicGroup, Entity, Startable, Resizable, MemberReplaceable, Group, ElasticJavaWebAppService {
-
+public interface ControlledDynamicWebAppCluster extends DynamicGroup, Entity, Startable, Resizable, MemberReplaceable,
+        Group, ElasticJavaWebAppService, JavaWebAppService.CanDeployAndUndeploy, JavaWebAppService.CanRedeployAll {
+    
     @SetFromFlag("initialSize")
     public static ConfigKey<Integer> INITIAL_SIZE = ConfigKeys.newConfigKeyWithDefault(Cluster.INITIAL_SIZE, 1);
 
@@ -66,20 +69,24 @@ public interface ControlledDynamicWebAppCluster extends DynamicGroup, Entity, St
     public static BasicAttributeSensorAndConfigKey<LoadBalancer> CONTROLLER = new BasicAttributeSensorAndConfigKey<LoadBalancer>(
         LoadBalancer.class, "controlleddynamicwebappcluster.controller", "Controller for the cluster; if null a default will created (using controllerSpec)");
 
+    @SuppressWarnings({ "unchecked", "rawtypes" })
     @SetFromFlag("controllerSpec")
     public static BasicAttributeSensorAndConfigKey<EntitySpec<? extends LoadBalancer>> CONTROLLER_SPEC = new BasicAttributeSensorAndConfigKey(
             EntitySpec.class, "controlleddynamicwebappcluster.controllerSpec", "Spec for creating the controller (if one not supplied explicitly); if null an NGINX instance will be created");
 
+    @SuppressWarnings({ "unchecked", "rawtypes", "deprecation" })
     /** factory (or closure) to create the web server, given flags */
     @SetFromFlag("factory")
     public static BasicAttributeSensorAndConfigKey<ConfigurableEntityFactory<? extends WebAppService>> FACTORY = new BasicAttributeSensorAndConfigKey(
             ConfigurableEntityFactory.class, DynamicCluster.FACTORY.getName(), "factory (or closure) to create the web server");
 
+    @SuppressWarnings({ "unchecked", "rawtypes" })
     /** Spec for web server entiites to be created */
     @SetFromFlag("memberSpec")
     public static BasicAttributeSensorAndConfigKey<EntitySpec<? extends WebAppService>> MEMBER_SPEC = new BasicAttributeSensorAndConfigKey(
             EntitySpec.class, DynamicCluster.MEMBER_SPEC.getName(), "Spec for web server entiites to be created");
 
+    @SuppressWarnings({ "unchecked", "rawtypes" })
     @SetFromFlag("webClusterSpec")
     public static BasicAttributeSensorAndConfigKey<EntitySpec<? extends DynamicWebAppCluster>> WEB_CLUSTER_SPEC = new BasicAttributeSensorAndConfigKey(
             EntitySpec.class, "controlleddynamicwebappcluster.webClusterSpec", "Spec for creating the cluster; if null a DynamicWebAppCluster will be created");
@@ -89,11 +96,13 @@ public interface ControlledDynamicWebAppCluster extends DynamicGroup, Entity, St
 
     public static final AttributeSensor<String> HOSTNAME = Attributes.HOSTNAME;
 
-    public static final AttributeSensor<Lifecycle> SERVICE_STATE = Attributes.SERVICE_STATE;
+    public static final AttributeSensor<Lifecycle> SERVICE_STATE_ACTUAL = Attributes.SERVICE_STATE_ACTUAL;
 
+    
     public LoadBalancer getController();
     
     public ConfigurableEntityFactory<WebAppService> getFactory();
     
     public DynamicWebAppCluster getCluster();
+    
 }

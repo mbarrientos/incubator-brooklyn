@@ -30,6 +30,7 @@ import brooklyn.mementos.Memento;
 
 import com.google.common.base.Objects;
 import com.google.common.base.Objects.ToStringHelper;
+import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 
 public abstract class AbstractMemento implements Memento, Serializable {
@@ -42,8 +43,10 @@ public abstract class AbstractMemento implements Memento, Serializable {
         protected String type;
         protected Class<?> typeClass;
         protected String displayName;
+        protected String catalogItemId;
         protected Map<String, Object> fields = Maps.newLinkedHashMap();
-        
+        protected List<Object> tags = Lists.newArrayList();
+
         @SuppressWarnings("unchecked")
         protected B self() {
             return (B) this;
@@ -54,7 +57,9 @@ public abstract class AbstractMemento implements Memento, Serializable {
             type = other.getType();
             typeClass = other.getTypeClass();
             displayName = other.getDisplayName();
+            catalogItemId = other.getCatalogItemId();
             fields.putAll(other.getCustomFields());
+            tags.addAll(other.getTags());
             return self();
         }
         public B brooklynVersion(String val) {
@@ -72,6 +77,9 @@ public abstract class AbstractMemento implements Memento, Serializable {
         public B displayName(String val) {
             displayName = val; return self();
         }
+        public B catalogItemId(String val) {
+            catalogItemId = val; return self();
+        }
         /**
          * @deprecated since 0.7.0; use config/attributes so generic persistence will work, rather than requiring "custom fields"
          */
@@ -85,6 +93,8 @@ public abstract class AbstractMemento implements Memento, Serializable {
     private String type;
     private String id;
     private String displayName;
+    private String catalogItemId;
+    private List<Object> tags;
 
     private transient Class<?> typeClass;
 
@@ -99,7 +109,9 @@ public abstract class AbstractMemento implements Memento, Serializable {
         type = builder.type;
         typeClass = builder.typeClass;
         displayName = builder.displayName;
+        catalogItemId = builder.catalogItemId;
         setCustomFields(builder.fields);
+        tags = toPersistedList(builder.tags);
     }
 
     // "fields" is not included as a field here, so that it is serialized after selected subclass fields
@@ -136,6 +148,16 @@ public abstract class AbstractMemento implements Memento, Serializable {
         return displayName;
     }
 
+    @Override
+    public String getCatalogItemId() {
+        return catalogItemId;
+    }
+
+    @Override
+    public List<Object> getTags() {
+        return fromPersistedList(tags);
+    }
+    
     @Deprecated
     @Override
     public Object getCustomField(String name) {

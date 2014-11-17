@@ -264,6 +264,14 @@ public class Jsonya {
             return this;
         }
         
+        public Navigator<T> putIfNotNull(Object k1, Object v1) {
+            if (v1!=null) {
+                map();
+                putInternal((Map)focus, k1, v1);
+            }
+            return this;
+        }
+        
         protected void putInternal(Map target, Object k1, Object v1, Object ...kvOthers) {
             assert (kvOthers.length % 2) == 0 : "even number of arguments required for put";
             target.put(translateKey(k1), translate(v1));
@@ -407,7 +415,7 @@ public class Jsonya {
                     // build a source map from the arguments as key-value pairs
                     if ((others.length % 2)==0)
                         throw new IllegalArgumentException("cannot add an odd number of arguments to a map" +
-                        		" ("+o1+" then "+Arrays.toString(others)+" in "+currentFocus+" in "+initialFocus+")");
+                                " ("+o1+" then "+Arrays.toString(others)+" in "+currentFocus+" in "+initialFocus+")");
                     source = MutableMap.of(translateKey(o1), translate(others[0]));
                     for (int i=1; i<others.length; )
                         source.put(translateKey(others[i++]), translate(others[i++]));

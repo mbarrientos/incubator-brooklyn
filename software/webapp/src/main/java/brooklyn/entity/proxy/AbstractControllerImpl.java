@@ -22,6 +22,7 @@ import static brooklyn.util.JavaGroovyEquivalents.groovyTruth;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 
+import java.net.URI;
 import java.util.Collection;
 import java.util.Map;
 import java.util.Set;
@@ -32,8 +33,9 @@ import org.slf4j.LoggerFactory;
 import brooklyn.entity.Entity;
 import brooklyn.entity.Group;
 import brooklyn.entity.basic.Entities;
-import brooklyn.entity.basic.Lifecycle;
 import brooklyn.entity.basic.EntityInternal;
+import brooklyn.entity.basic.Lifecycle;
+import brooklyn.entity.basic.ServiceStateLogic;
 import brooklyn.entity.basic.SoftwareProcessImpl;
 import brooklyn.entity.group.AbstractMembershipTrackingPolicy;
 import brooklyn.entity.group.Cluster;
@@ -42,10 +44,13 @@ import brooklyn.event.AttributeSensor;
 import brooklyn.event.feed.ConfigToAttributes;
 import brooklyn.location.access.BrooklynAccessUtils;
 import brooklyn.management.Task;
+import brooklyn.policy.Policy;
 import brooklyn.policy.PolicySpec;
 import brooklyn.util.collections.MutableMap;
+import brooklyn.util.exceptions.Exceptions;
 import brooklyn.util.guava.Maybe;
 import brooklyn.util.task.Tasks;
+import brooklyn.util.text.Strings;
 
 import com.google.common.base.Objects;
 import com.google.common.base.Predicates;
@@ -110,6 +115,14 @@ public abstract class AbstractControllerImpl extends SoftwareProcessImpl impleme
             LOG.warn("Call to addServerPoolMemberTrackingPolicy when serverPoolMemberTrackingPolicy already exists, in {}", this);
             removeServerPoolMemberTrackingPolicy();
         }
+        for (Policy p: getPolicies()) {
+            if (p instanceof ServerPoolMemberTrackerPolicy) {
+                // TODO want a more elegant idiom for this!
+                LOG.info(this+" picking up "+p+" as the tracker (already set, often due to rebind)");
+                serverPoolMemberTrackerPolicy = (ServerPoolMemberTrackerPolicy) p;
+                return;
+            }
+        }
         
         AttributeSensor<?> hostAndPortSensor = getConfig(HOST_AND_PORT_SENSOR);
         AttributeSensor<?> hostnameSensor = getConfig(HOSTNAME_SENSOR);
@@ -124,8 +137,7 @@ public abstract class AbstractControllerImpl extends SoftwareProcessImpl impleme
         serverPoolMemberTrackerPolicy = addPolicy(PolicySpec.create(ServerPoolMemberTrackerPolicy.class)
                 .displayName("Controller targets tracker")
                 .configure("group", serverPool)
-                .configure("sensorsToTrack", sensorsToTrack)
-                .configure(ServerPoolMemberTrackerPolicy.NOTIFY_ON_DUPLICATES, false));
+                .configure("sensorsToTrack", sensorsToTrack));
 
         LOG.info("Added policy {} to {}", serverPoolMemberTrackerPolicy, this);
         
@@ -169,7 +181,7 @@ public abstract class AbstractControllerImpl extends SoftwareProcessImpl impleme
      * Can pass in the 'serverPool'.
      */
     @Override
-    public void bind(Map flags) {
+    public void bind(Map<?,?> flags) {
         if (flags.containsKey("serverPool")) {
             setConfigEvenIfOwned(SERVER_POOL, (Group) flags.get("serverPool"));
         } 
@@ -220,7 +232,7 @@ public abstract class AbstractControllerImpl extends SoftwareProcessImpl impleme
     /** primary URL this controller serves, if one can / has been inferred */
     @Override
     public String getUrl() {
-        return getAttribute(ROOT_URL);
+        return Strings.toString( getAttribute(MAIN_URI) );
     }
 
     @Override
@@ -280,7 +292,7 @@ public abstract class AbstractControllerImpl extends SoftwareProcessImpl impleme
     protected void preStart() {
         super.preStart();
 
-        AttributeSensor<?> hostAndPortSensor = getConfig(HOST_AND_PORT_SENSOR);
+        AttributeSensor<String> hostAndPortSensor = getConfig(HOST_AND_PORT_SENSOR);
         Maybe<Object> hostnameSensor = getConfigRaw(HOSTNAME_SENSOR, true);
         Maybe<Object> portSensor = getConfigRaw(PORT_NUMBER_SENSOR, true);
         if (hostAndPortSensor != null) {
@@ -291,6 +303,7 @@ public abstract class AbstractControllerImpl extends SoftwareProcessImpl impleme
         ConfigToAttributes.apply(this);
 
         setAttribute(PROTOCOL, inferProtocol());
+        setAttribute(MAIN_URI, URI.create(inferUrl()));
         setAttribute(ROOT_URL, inferUrl());
  
         checkNotNull(getPortNumberSensor(), "no sensor configured to infer port number");
@@ -299,7 +312,10 @@ public abstract class AbstractControllerImpl extends SoftwareProcessImpl impleme
     @Override
     protected void connectSensors() {
         super.connectSensors();
-        if (getUrl()==null) setAttribute(ROOT_URL, inferUrl());
+        if (getUrl()==null) {
+            setAttribute(MAIN_URI, URI.create(inferUrl()));
+            setAttribute(ROOT_URL, inferUrl());
+        }
         
         // TODO when rebind policies, and rebind calls connectSensors, then this will cause problems.
         // Also relying on addServerPoolMemberTrackingPolicy to set the serverPoolAddresses and serverPoolTargets.
@@ -317,10 +333,10 @@ public abstract class AbstractControllerImpl extends SoftwareProcessImpl impleme
     @Override
     protected void postRebind() {
         super.postRebind();
-        Lifecycle state = getAttribute(SERVICE_STATE);
+        Lifecycle state = getAttribute(SERVICE_STATE_ACTUAL);
         if (state != null && state == Lifecycle.RUNNING) {
             isActive = true;
-            update();
+            updateNeeded();
         }
     }
 
@@ -351,8 +367,14 @@ public abstract class AbstractControllerImpl extends SoftwareProcessImpl impleme
     
     @Override
     public void update() {
-        Task<?> task = updateAsync();
-        if (task != null) task.getUnchecked();
+        try {
+            Task<?> task = updateAsync();
+            if (task != null) task.getUnchecked();
+            ServiceStateLogic.ServiceProblemsLogic.clearProblemsIndicator(this, "update");
+        } catch (Exception e) {
+            ServiceStateLogic.ServiceProblemsLogic.updateProblemsIndicator(this, "update", "update failed with: "+Exceptions.collapseText(e));
+            throw Exceptions.propagate(e);
+        }
     }
     
     public synchronized Task<?> updateAsync() {

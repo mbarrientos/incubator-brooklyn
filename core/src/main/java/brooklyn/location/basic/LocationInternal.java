@@ -20,10 +20,10 @@ package brooklyn.location.basic;
 
 import java.util.Map;
 
+import brooklyn.basic.BrooklynObjectInternal;
 import brooklyn.config.ConfigKey;
 import brooklyn.entity.basic.ConfigKeys;
 import brooklyn.entity.rebind.RebindSupport;
-import brooklyn.entity.rebind.Rebindable;
 import brooklyn.location.Location;
 import brooklyn.management.ManagementContext;
 import brooklyn.mementos.LocationMemento;
@@ -34,7 +34,7 @@ import com.google.common.annotations.Beta;
 /**
  * Information about locations private to Brooklyn.
  */
-public interface LocationInternal extends Location, Rebindable {
+public interface LocationInternal extends BrooklynObjectInternal, Location {
 
     @Beta
     public static final ConfigKey<String> ORIGINAL_SPEC = ConfigKeys.newStringConfigKey("spec.original", "The original spec used to instantiate a location");
@@ -67,7 +67,13 @@ public interface LocationInternal extends Location, Rebindable {
 
     ConfigBag getAllConfigBag();
 
+    /**
+     * Users are strongly discouraged from calling or overriding this method.
+     * It is for internal calls only, relating to persisting/rebinding entities.
+     * This method may change (or be removed) in a future release without notice.
+     */
     @Override
+    @Beta
     RebindSupport<LocationMemento> getRebindSupport();
     
     ManagementContext getManagementContext();

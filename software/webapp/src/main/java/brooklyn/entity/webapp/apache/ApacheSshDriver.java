@@ -1,28 +1,43 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
 package brooklyn.entity.webapp.apache;
 
-import brooklyn.entity.webapp.JavaWebAppSshDriver;
+
 import brooklyn.entity.webapp.PhpWebAppSshDriver;
-import brooklyn.entity.webapp.WebAppService;
-import brooklyn.entity.webapp.jboss.JBoss7ServerImpl;
 import brooklyn.location.basic.SshMachineLocation;
 import brooklyn.util.collections.MutableMap;
 import brooklyn.util.ssh.BashCommands;
-import brooklyn.util.stream.StreamGobbler;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
+import java.net.Inet4Address;
+import java.net.InetAddress;
+import java.net.NetworkInterface;
+import java.util.Enumeration;
 import java.util.List;
 import java.util.Map;
-
-import static com.google.common.base.Preconditions.checkNotNull;
-import static java.lang.String.format;
 
 
 public class ApacheSshDriver extends PhpWebAppSshDriver implements ApacheDriver {
 
-   private static final Logger LOG = LoggerFactory.getLogger(ApacheSshDriver.class);
+    private static final Logger LOG = LoggerFactory.getLogger(ApacheSshDriver.class);
 
     public ApacheSshDriver(ApacheServerImpl entity, SshMachineLocation machine) {
         super(entity, machine);
@@ -65,11 +80,6 @@ public class ApacheSshDriver extends PhpWebAppSshDriver implements ApacheDriver 
         }
     }
 
-    private void removeOldConfigFile(){
-        String oldApacheConfigurationFilePath=getEntity().getConfigurationDir()+"/"+"apache2.conf";
-        getMachine().execCommands("deleteOldApacheConfigFile", ImmutableList.of("rm -f"+oldApacheConfigurationFilePath));
-    }
-
     private boolean isApacheInstalled(){
         boolean apacheIsInstalled=false;
         int result= getMachine().execCommands("apacheInstalled", ImmutableList.of("apache2 -v"));
@@ -78,19 +88,23 @@ public class ApacheSshDriver extends PhpWebAppSshDriver implements ApacheDriver 
         return apacheIsInstalled;
     }
 
+    private void removeOldConfigFile(){
+        String oldApacheConfigurationFilePath=getEntity().getConfigurationDir()+"/"+"apache2.conf";
+        getMachine().execCommands("deleteOldApacheConfigFile", ImmutableList.of("rm -f"+oldApacheConfigurationFilePath));
+    }
+
     private int installApacheServer(){
         int result;
-        LOG.warn("Installing Apache Server {}", new Object[]{getEntity()});
+        LOG.info("Installing Apache Server {}", new Object[]{getEntity()});
         List<String> commands= ImmutableList.<String>builder().add(BashCommands.
                 installPackage(MutableMap.of("apt", "apache2"), null)).build();
         result=newScript(INSTALLING).body.append(commands).execute();
         if(result!=0)
             log.warn("Problem installing {} for {}: result {}", new Object[]{ entity, result});
         else
-            log.info("Installed {} for {}: result {} commands {}\n", new Object[]{ entity, result}, commands);
+            log.info("Installed {} for {} commands {}\n", new Object[]{ result, entity, commands});
         return result;
     }
-
 
     @Override
     public void customize(){
@@ -99,13 +113,13 @@ public class ApacheSshDriver extends PhpWebAppSshDriver implements ApacheDriver 
                 .body.append(
                 disableCurrentDeployRunDir(),
                 removeAvailableSitesConfigurationFolder(),
-                addDeployRunDirConfiguration(),
+                createDeployRunDirConfigurationFile(),
                 enableAvailableDeploymentRunDir(),
                 enableServerStatusServerModule(),
                 configureHttpPort(),
-                realoadApacheService()
+                realoadApacheService(),
+                installPhp()
         ).execute();
-
         LOG.info("deployInit initial applications from {}", new Object[]{this});
         getEntity().deployInitialApplications();
     }
@@ -119,7 +133,6 @@ public class ApacheSshDriver extends PhpWebAppSshDriver implements ApacheDriver 
         return  getMachine().execCommands("startApacheIfItIsNeeded", ImmutableList.of("service apache2 start"));
     }
 
-
     private String disableCurrentDeployRunDir(){
 
         String result = String.format(
@@ -128,9 +141,12 @@ public class ApacheSshDriver extends PhpWebAppSshDriver implements ApacheDriver 
                         "FILENAME=$(basename $file)\n" +
                         "exec a2dissite $FILENAME | true\n" +
                         "done\n" +
+                        "\n" +
+                        "rm %s/sites-enabled/*" +
                         "\n",
                 getEntity().getConfigurationDir(),
-                getEntity().getAvailableSitesConfigurationFolder());
+                getEntity().getAvailableSitesConfigurationFolder(),
+                getEntity().getConfigurationDir());
         return result;
     }
 
@@ -139,41 +155,75 @@ public class ApacheSshDriver extends PhpWebAppSshDriver implements ApacheDriver 
                 "invoke-rc.d apache2 reload\n";
     }
 
-   private String removeAvailableSitesConfigurationFolder(){
-       String result=String.format(
-               "rm -rf %s%s/*\n",
-               getEntity().getConfigurationDir(),
-               getEntity().getAvailableSitesConfigurationFolder());
-       return result;
-   }
+    private String removeAvailableSitesConfigurationFolder(){
+        String result=String.format(
+                "rm -rf %s%s/*\n",
+                getEntity().getConfigurationDir(),
+                getEntity().getAvailableSitesConfigurationFolder());
+        return result;
+    }
 
-   private String addDeployRunDirConfiguration(){
+    private String  addFolderToAvailablesSitesConfigurationFile(String targetName){
         String result= String.format(
-                "%s"+
-                "cat > %s%s/BrooklynDeployRunDir.conf << \"EOF\"\n" +
-                "<VirtualHost *:%s>\n" +
-                "ServerAdmin webmaster@localhost\n" +
-                "DocumentRoot %s\n" +
-                "ErrorLog ${APACHE_LOG_DIR}/error.log\n" +
-                "CustomLog ${APACHE_LOG_DIR}/access.log combined\n" +
-                "</VirtualHost>\n" +
-                "EOF\n"+
-                "%s\n",
+                "cat <<EOT >> %s%s/%s\n" +
+                        "#"+targetName+"\n"+
+                        "<VirtualHost *:%s>\n" +
+                        "\tServerAdmin webmaster@localhost\n" +
+                        "\tDocumentRoot %s/"+targetName+"\n"+
+                        "\tErrorLog ${APACHE_LOG_DIR}/error-"+targetName+".log\n" +
+                        "\tCustomLog ${APACHE_LOG_DIR}/access-"+targetName+".log combined\n" +
+                        "</VirtualHost>\n" +
+                        "EOT",
+                getEntity().getConfigurationDir(),
+                getEntity().getAvailableSitesConfigurationFolder(),
+                getEntity().getAvailablesSitesConfigurationFile(),
+                getEntity().getHttpPort(),
+                getEntity().getDeployRunDir(),
+                changePermissionsOfFolder(getEntity().getDeployRunDir()+"/"+targetName));
+        return result;
+    }
+
+    private String createDeployRunDirConfigurationFile(){
+        String result= String.format(
+                "%s\n"+
+                        "cat > %s%s/%s << \"EOF\"\n" +
+                        "#[Brooklyn] Configuration File\n" +
+                        "#app_id\n" +
+                        "#<VirtualHost * :${PORT}>\n" +
+                        "\t#ServerAdmin webmaster@localhost\n" +
+                        "\t#DocumentRoot ${DEPLOY_RUN_DIR}/app_id\n"+
+                        "\t#ErrorLog ${APACHE_LOG_DIR} /error-app_id.log\n"+
+                        "\t#ErrorLog ${APACHE_LOG_DIR} /access-app_id.log combined\n"+
+                        "\n\n\t#SSL_CONFIGURATION\n" +
+                        "\t# SSL SETUP\n" +
+                        "\t# ServerName www.awesomesite.com/app_id\n" +
+                        "\t# SSLEngine on\n" +
+                        "\t#DEBIAN \n" +
+                        "\t# SSLCertificateFile /etc/ssl/certs/cert.pem\n" +
+                        "        # SSLCertificateKeyFile /etc/ssl/private/cert.key\n" +
+                        "\n" +
+                        "\t# REDHAT \n" +
+                        "\t# SSLCertificateFile  /etc/pki/tls/certs/cert.pem\n" +
+                        "\t# SSLCertificateKeyFile /etc/pki/tls/private/cert.key\n" +
+                        "#</VirtualHost>\n\n\n" +
+                        "<VirtualHost *:%s>\n" +
+                        "\tDocumentRoot /var/www/\n" +
+                        "</VirtualHost>\n\n" +
+                        "EOF",
                 createFolderDeployRunDir(),
                 getEntity().getConfigurationDir(),
                 getEntity().getAvailableSitesConfigurationFolder(),
-                getEntity().getHttpPort(),
-                getEntity().getDeployRunDir(),
-                changePermissionsOfDeployRunDir());
-       return result;
+                getEntity().getAvailablesSitesConfigurationFile(),
+                getEntity().getHttpPort());
+        return result;
     }
 
     private String createFolderDeployRunDir(){
-               return "mkdir -p "+getRunDir()+"\n";
-   }
+        return "mkdir -p "+getRunDir()+"\n";
+    }
 
-    private String changePermissionsOfDeployRunDir(){
-        return String.format("chown -R %s:%s %s\n",getEntity().getDefaultGroup(), getEntity().getDefaultGroup(),getRunDir());
+    private String changePermissionsOfFolder(String folder){
+        return String.format("chown -R %s:%s %s\n",getEntity().getDefaultGroup(), getEntity().getDefaultGroup(),folder);
     }
 
     private String enableAvailableDeploymentRunDir(){
@@ -194,12 +244,17 @@ public class ApacheSshDriver extends PhpWebAppSshDriver implements ApacheDriver 
         String result;
         result= String.format(
                 "cat <<EOT >> %s/apache2.conf\n" +
-                "<Location /server-status>\n" +
-                "\tSetHandler server-status\n" +
-                "</Location>\n" +
-                "ExtendedStatus On\n"+
-                "EOT\n",
-                getEntity().getConfigurationDir());
+                        "<Location /server-status>\n" +
+                        "\tSetHandler server-status\n" +
+                        "\tOrder deny,allow\n" +
+                        "\tDeny from all\n" +
+                        "\tAllow from localhost\n" +
+                        "\tAllow from %s\n" +
+                        "</Location>\n" +
+                        "ExtendedStatus On\n"+
+                        "EOT\n",
+                getEntity().getConfigurationDir(),
+                getBrooklynIPv4());
         return result;
     }
 
@@ -214,11 +269,44 @@ public class ApacheSshDriver extends PhpWebAppSshDriver implements ApacheDriver 
         return result;
     }
 
+    private String installPhp(){
+
+        String result = String.format(
+                "sudo apt-get -y install php5" +
+                        "\n");
+        return result;
+
+    }
+
     //TODO
     @Override
     public void launch() {
         //Now this method does not return any value but It should run the app using
         //the startup files passed in the server of the application
+    }
+
+    @Override
+    public String deployGitResource(String url, String targetName){
+        super.deployGitResource(url, targetName);
+        newScript(CUSTOMIZING)
+                .body.append(
+                addFolderToAvailablesSitesConfigurationFile(targetName),
+                realoadApacheService(),
+                enableAvailableDeploymentRunDir()).execute();
+
+        return targetName;
+    }
+
+    @Override
+    public String deployTarballResource(String url, String targetName){
+        super.deployTarballResource(url, targetName);
+        newScript(CUSTOMIZING)
+                .body.append(
+                addFolderToAvailablesSitesConfigurationFile(targetName),
+                realoadApacheService(),
+                enableAvailableDeploymentRunDir()).execute();
+
+        return targetName;
     }
 
     @Override
@@ -249,4 +337,28 @@ public class ApacheSshDriver extends PhpWebAppSshDriver implements ApacheDriver 
         stop();
     }
 
+    private String getBrooklynIPv4() {
+
+        String ip = "127.0.0.1";
+        try {
+            Enumeration<NetworkInterface> n = NetworkInterface.getNetworkInterfaces();
+            for (; n.hasMoreElements(); ) {
+                NetworkInterface e = n.nextElement();
+                System.out.println("Interface: " + e.getName());
+                Enumeration<InetAddress> a = e.getInetAddresses();
+                for (; a.hasMoreElements(); ) {
+                    InetAddress addr = a.nextElement();
+                    if ((addr instanceof Inet4Address)
+                            && (!addr.getHostAddress().equals("127.0.0.1"))) {
+                        return addr.getHostAddress();
+                    }
+                }
+            }
+
+        } catch (Exception e) {
+            log.warn("Unreachable IP - return {} in {} ", new Object[]{ip, this});
+        }
+        return ip;
+    }
 }
+

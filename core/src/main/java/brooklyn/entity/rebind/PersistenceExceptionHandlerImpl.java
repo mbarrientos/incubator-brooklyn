@@ -24,11 +24,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import brooklyn.entity.Entity;
-import brooklyn.location.Location;
+import brooklyn.basic.BrooklynObject;
 import brooklyn.mementos.Memento;
-import brooklyn.policy.Enricher;
-import brooklyn.policy.Policy;
 import brooklyn.util.exceptions.Exceptions;
 
 import com.google.common.collect.Sets;
@@ -62,33 +59,21 @@ public class PersistenceExceptionHandlerImpl implements PersistenceExceptionHand
     }
     
     @Override
-    public void onGenerateEntityMementoFailed(Entity entity, Exception e) {
-        String errmsg = "generate memento for entity "+entity.getEntityType().getSimpleName()+"("+entity.getId()+")";
-        onErrorImpl(errmsg, e, prevFailedMementoGenerators.add(entity.getId()));
-    }
-    
-    @Override
-    public void onGenerateLocationMementoFailed(Location location, Exception e) {
-        String errmsg = "generate memento for location "+location.getClass().getSimpleName()+"("+location.getId()+")";
-        onErrorImpl(errmsg, e, prevFailedMementoGenerators.add(location.getId()));
-    }
-    
-    @Override
-    public void onGeneratePolicyMementoFailed(Policy policy, Exception e) {
-        String errmsg = "generate memento for policy "+policy.getClass().getSimpleName()+"("+policy.getId()+")";
-        onErrorImpl(errmsg, e, prevFailedMementoGenerators.add(policy.getId()));
-    }
-    
-    @Override
-    public void onGenerateEnricherMementoFailed(Enricher enricher, Exception e) {
-        String errmsg = "generate memento for enricher "+enricher.getClass().getSimpleName()+"("+enricher.getId()+")";
-        onErrorImpl(errmsg, e, prevFailedMementoGenerators.add(enricher.getId()));
+    public void onGenerateMementoFailed(BrooklynObjectType type, BrooklynObject instance, Exception e) {
+        String errmsg = "generate memento for "+type+" "+instance.getClass().getName()+"("+instance.getId()+")";
+        onErrorImpl(errmsg, e, prevFailedMementoGenerators.add(instance.getId()));
     }
     
     @Override
     public void onPersistMementoFailed(Memento memento, Exception e) {
         String errmsg = "persist for "+memento.getClass().getSimpleName()+" "+memento.getType()+"("+memento.getId()+")";
         onErrorImpl(errmsg, e, prevFailedPersisters.add(memento.getId()));
+    }
+    
+    @Override
+    public void onPersistRawMementoFailed(BrooklynObjectType type, String id, Exception e) {
+        String errmsg = "persist for "+type+" "+"("+id+")";
+        onErrorImpl(errmsg, e, prevFailedPersisters.add(id));
     }
     
     @Override

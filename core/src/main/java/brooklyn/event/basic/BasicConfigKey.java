@@ -214,7 +214,11 @@ public class BasicConfigKey<T> implements ConfigKeySelfExtracting<T>, Serializab
     }
     
     protected Object resolveValue(Object v, ExecutionContext exec) throws ExecutionException, InterruptedException {
-        return Tasks.resolveValue(v, getType(), exec, "config "+name);
+        if (v instanceof Collection || v instanceof Map) {
+            return Tasks.resolveDeepValue(v, Object.class, exec, "config "+name);
+        } else {
+            return Tasks.resolveValue(v, getType(), exec, "config "+name);
+        }
     }
 
     /** used to record a key which overwrites another; only needed at disambiguation time 
@@ -227,8 +231,12 @@ public class BasicConfigKey<T> implements ConfigKeySelfExtracting<T>, Serializab
         private final ConfigKey<T> parentKey;
         
         public BasicConfigKeyOverwriting(ConfigKey<T> key, T defaultValue) {
+            this(key, key.getDescription(), defaultValue);
+        }
+        
+        public BasicConfigKeyOverwriting(ConfigKey<T> key, String newDescription, T defaultValue) {
             super(checkNotNull(key.getTypeToken(), "type"), checkNotNull(key.getName(), "name"), 
-                    key.getDescription(), defaultValue);
+                    newDescription, defaultValue);
             parentKey = key;
         }
         

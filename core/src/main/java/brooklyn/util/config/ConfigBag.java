@@ -254,7 +254,7 @@ public class ConfigBag {
 
     protected void logInvalidKey(Object key) {
         String message = (key == null ? "Invalid key 'null'" : "Invalid key type "+key.getClass().getCanonicalName()+" ("+key+")") +
-                "being used for configuration, ignoring";
+                " being used for configuration, ignoring";
         log.debug(message, new Throwable("Source of "+message));
         log.warn(message);
     }
@@ -396,15 +396,20 @@ public class ConfigBag {
         }
     }
 
-    protected <T> T get(ConfigKey<T> key, boolean remove) {
-        // TODO for now, no evaluation -- closure content / smart (self-extracting) keys are NOT supported
+    protected <T> T get(ConfigKey<T> key, boolean markUsed) {
+        // TODO for now, no evaluation -- maps / closure content / other smart (self-extracting) keys are NOT supported
         // (need a clean way to inject that behaviour, as well as desired TypeCoercions)
-        Object value;
         if (config.containsKey(key.getName()))
-            value = getStringKey(key.getName(), remove);
-        else
-            value = key.getDefaultValue();
-        return TypeCoercions.coerce(value, key.getTypeToken());
+            return coerceFirstNonNullKeyValue(key, getStringKey(key.getName(), markUsed));
+        
+        return coerceFirstNonNullKeyValue(key);
+    }
+
+    /** returns the first non-null value to be the type indicated by the key, or the keys default value if no non-null values are supplied */
+    public static <T> T coerceFirstNonNullKeyValue(ConfigKey<T> key, Object ...values) {
+        for (Object o: values)
+            if (o!=null) return TypeCoercions.coerce(o, key.getTypeToken());
+        return TypeCoercions.coerce(key.getDefaultValue(), key.getTypeToken());
     }
 
     protected Object getStringKey(String key, boolean markUsed) {

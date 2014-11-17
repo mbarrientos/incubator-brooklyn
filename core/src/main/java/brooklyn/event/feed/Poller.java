@@ -158,7 +158,7 @@ public class Poller<V> {
                         return task;
                     }
                 };
-                ScheduledTask task = new ScheduledTask(MutableMap.of("period", pollJob.pollPeriod), pollingTaskFactory);
+                ScheduledTask task = new ScheduledTask(MutableMap.of("period", pollJob.pollPeriod, "displayName", "scheduled:"+scheduleName), pollingTaskFactory);
                 tasks.add((ScheduledTask)Entities.submit(entity, task));
             } else {
                 if (log.isDebugEnabled()) log.debug("Activating poll (but leaving off, as period {}) for {} (using {})", new Object[] {pollJob.pollPeriod, entity, this});
@@ -175,10 +175,10 @@ public class Poller<V> {
         
         running = false;
         for (Task<?> task : oneOffTasks) {
-            task.cancel(true);
+            if (task != null) task.cancel(true);
         }
         for (ScheduledTask task : tasks) {
-            task.cancel();
+            if (task != null) task.cancel();
         }
         oneOffTasks.clear();
         tasks.clear();

@@ -23,12 +23,15 @@ import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import brooklyn.catalog.Catalog;
 import brooklyn.enricher.basic.AbstractTypeTransformingEnricher;
 import brooklyn.entity.Entity;
 import brooklyn.event.AttributeSensor;
 import brooklyn.event.Sensor;
 import brooklyn.event.SensorEvent;
 import brooklyn.util.flags.SetFromFlag;
+import brooklyn.util.javalang.JavaClassNames;
+import brooklyn.util.time.Duration;
 
 /**
  * Converts an absolute measure of time into a fraction of time, based on the delta between consecutive values 
@@ -39,6 +42,8 @@ import brooklyn.util.flags.SetFromFlag;
  * 
  * It also configured with the time units for the values.
  */
+//@Catalog(name="Time-fraction Delta", description="Converts an absolute measure of time into a fraction of time, "
+//        + "based on the delta between consecutive values and the elapsed time between those values.")
 public class TimeFractionDeltaEnricher<T extends Number> extends AbstractTypeTransformingEnricher<T,Double> {
     private static final Logger LOG = LoggerFactory.getLogger(TimeFractionDeltaEnricher.class);
     
@@ -58,6 +63,9 @@ public class TimeFractionDeltaEnricher<T extends Number> extends AbstractTypeTra
     public TimeFractionDeltaEnricher(Entity producer, Sensor<T> source, Sensor<Double> target, long nanosPerOrigUnit) {
         super(producer, source, target);
         this.nanosPerOrigUnit = nanosPerOrigUnit;
+        
+        if (source!=null && target!=null)
+            this.uniqueTag = JavaClassNames.simpleClassName(getClass())+":"+source.getName()+"*"+Duration.nanos(nanosPerOrigUnit)+"->"+target.getName();
     }
     
     @Override

@@ -38,7 +38,8 @@ import brooklyn.management.Task;
 import brooklyn.management.internal.LocalManagementContext;
 import brooklyn.test.entity.LocalManagementContextForTests;
 import brooklyn.util.ResourceUtils;
-import brooklyn.util.stream.Streams;
+
+import com.google.common.base.Joiner;
 
 public abstract class AbstractYamlTest {
 
@@ -55,7 +56,7 @@ public abstract class AbstractYamlTest {
     protected ManagementContext mgmt() { return brooklynMgmt; }
     
     @BeforeMethod(alwaysRun = true)
-    public void setup() {
+    public void setUp() {
         launcher = new BrooklynCampPlatformLauncherNoServer() {
             @Override
             protected LocalManagementContext newMgmtContext() {
@@ -68,11 +69,12 @@ public abstract class AbstractYamlTest {
     }
 
     protected LocalManagementContext newTestManagementContext() {
-        return new LocalManagementContextForTests();
+        // TODO they don't all need osgi, just a few do, so could speed it up by specifying when they do
+        return LocalManagementContextForTests.newInstanceWithOsgi();
     }
     
     @AfterMethod(alwaysRun = true)
-    public void teardown() {
+    public void tearDown() {
         if (brooklynMgmt != null) Entities.destroyAll(brooklynMgmt);
         if (launcher != null) launcher.stopServers();
     }
@@ -85,12 +87,16 @@ public abstract class AbstractYamlTest {
         }
     }
 
-    protected Entity createAndStartApplication(String yamlFileName, String ...extraLines) throws Exception {
+    protected Reader loadYaml(String yamlFileName, String ...extraLines) throws Exception {
         String input = new ResourceUtils(this).getResourceAsString(yamlFileName).trim();
         StringBuilder builder = new StringBuilder(input);
         for (String l: extraLines)
             builder.append("\n").append(l);
-        return createAndStartApplication(Streams.newReaderWithContents(builder.toString()));
+        return new StringReader(builder.toString());
+    }
+    
+    protected Entity createAndStartApplication(String... multiLineYaml) throws Exception {
+        return createAndStartApplication(join(multiLineYaml));
     }
     
     protected Entity createAndStartApplication(String input) throws Exception {
@@ -122,7 +128,24 @@ public abstract class AbstractYamlTest {
         return app;
     }
 
+    protected void addCatalogItem(String... catalogYaml) {
+        addCatalogItem(join(catalogYaml));
+    }
+
+    protected void addCatalogItem(String catalogYaml) {
+        mgmt().getCatalog().addItem(catalogYaml);
+    }
+
+    protected void deleteCatalogEntity(String catalogItem) {
+        mgmt().getCatalog().deleteCatalogItem(catalogItem);
+    }
+    
     protected Logger getLogger() {
         return LOG;
     }
+
+    private String join(String[] catalogYaml) {
+        return Joiner.on("\n").join(catalogYaml);
+    }
+    
 }

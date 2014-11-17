@@ -23,12 +23,14 @@ import java.util.LinkedList;
 
 import com.google.common.base.Preconditions;
 
+import brooklyn.catalog.Catalog;
 import brooklyn.enricher.basic.AbstractTypeTransformingEnricher;
 import brooklyn.entity.Entity;
 import brooklyn.event.AttributeSensor;
 import brooklyn.event.Sensor;
 import brooklyn.event.SensorEvent;
 import brooklyn.util.flags.SetFromFlag;
+import brooklyn.util.javalang.JavaClassNames;
 import brooklyn.util.time.Duration;
 
 /**
@@ -54,6 +56,8 @@ import brooklyn.util.time.Duration;
  * <p>
  * The default average when no data has been received is 0, with a confidence of 0
  */
+//@Catalog(name="Rolling Mean in Time Window", description="Transforms a sensor's data into a rolling average "
+//        + "based on a time window.")
 public class RollingTimeWindowMeanEnricher<T extends Number> extends AbstractTypeTransformingEnricher<T,Double> {
     public static class ConfidenceQualifiedNumber {
         final Double value;
@@ -79,6 +83,9 @@ public class RollingTimeWindowMeanEnricher<T extends Number> extends AbstractTyp
         AttributeSensor<Double> target, Duration timePeriod) {
         super(producer, source, target);
         this.timePeriod = Preconditions.checkNotNull(timePeriod, "timePeriod");
+        
+        if (source!=null && target!=null)
+            this.uniqueTag = JavaClassNames.simpleClassName(getClass())+":"+source.getName()+"/"+timePeriod+"->"+target.getName();
     }
 
     /** @deprecated since 0.6.0 use Duration parameter rather than long with millis */

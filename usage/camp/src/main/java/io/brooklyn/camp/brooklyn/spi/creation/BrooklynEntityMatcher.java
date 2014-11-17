@@ -18,7 +18,7 @@
  */
 package io.brooklyn.camp.brooklyn.spi.creation;
 
-import io.brooklyn.camp.brooklyn.BrooklynCampPlatform;
+import io.brooklyn.camp.brooklyn.BrooklynCampConstants;
 import io.brooklyn.camp.spi.PlatformComponentTemplate;
 import io.brooklyn.camp.spi.PlatformComponentTemplate.Builder;
 import io.brooklyn.camp.spi.pdp.AssemblyTemplateConstructor;
@@ -41,6 +41,7 @@ import brooklyn.util.config.ConfigBag;
 import brooklyn.util.exceptions.Exceptions;
 import brooklyn.util.flags.FlagUtils;
 import brooklyn.util.flags.FlagUtils.FlagConfigKeyAndValueRecord;
+import brooklyn.util.net.Urls;
 import brooklyn.util.text.Strings;
 
 import com.google.common.collect.Lists;
@@ -66,18 +67,29 @@ public class BrooklynEntityMatcher implements PdpMatcher {
      * or null if not supported */
     protected String lookupType(Object deploymentPlanItem) {
         if (deploymentPlanItem instanceof Service) {
-            String name = ((Service)deploymentPlanItem).getName();
+            Service service = (Service)deploymentPlanItem;
+            
+            String name = service.getName();
             if (mgmt.getCatalog().getCatalogItem(name) != null) {
                 return name;
             }
-        }
-        if (deploymentPlanItem instanceof Service) {
-            String serviceType = ((Service)deploymentPlanItem).getServiceType();
+
+            String serviceType = service.getServiceType();
             BrooklynClassLoadingContext loader = BasicBrooklynCatalog.BrooklynLoaderTracker.getLoader();
             if (loader == null) loader = JavaBrooklynClassLoadingContext.newDefault(mgmt);
-            if (!BrooklynComponentTemplateResolver.Factory.supportsType(loader, serviceType))
-                return null;
-            return serviceType;
+            if (BrooklynComponentTemplateResolver.Factory.supportsType(loader, serviceType))
+                return serviceType;
+
+            String protocol = Urls.getProtocol(serviceType);
+            if (protocol != null) {
+                if (BrooklynCampConstants.YAML_URL_PROTOCOL_WHITELIST.contains(protocol)) {
+                    return serviceType;
+                } else {
+                    log.warn("The reference '" + serviceType + "' looks like an URL but the protocol '" + 
+                            protocol + "' isn't white listed " + BrooklynCampConstants.YAML_URL_PROTOCOL_WHITELIST + ". " +
+                            "Not recognized as catalog item or java item as well!");
+                }
+            }
         }
         return null;
     }
@@ -123,7 +135,7 @@ public class BrooklynEntityMatcher implements PdpMatcher {
         Object locations = attrs.remove("locations");
         if (locations!=null)
             builder.customAttribute("locations", locations);
-        
+
         MutableMap<Object, Object> brooklynConfig = MutableMap.of();
         Object origBrooklynConfig = attrs.remove("brooklyn.config");
         if (origBrooklynConfig!=null) {
@@ -203,6 +215,8 @@ public class BrooklynEntityMatcher implements PdpMatcher {
         if (attrs==null || attrs.isEmpty())
             return null;
         try {
+            // TODO don't use the mgmt loader, but instead use something like catalog.createSpec
+            // currently we get warnings and are unable to retrieve flags for items which come from catalog 
             Class<? extends Entity> type = BrooklynComponentTemplateResolver.Factory.newInstance(JavaBrooklynClassLoadingContext.newDefault(mgmt), typeName).loadEntityClass();
             ConfigBag bag = ConfigBag.newInstance(attrs);
             List<FlagConfigKeyAndValueRecord> values = FlagUtils.findAllFlagsAndConfigKeys(null, type, bag);
@@ -219,7 +233,14 @@ public class BrooklynEntityMatcher implements PdpMatcher {
             return values;
         } catch (Exception e) {
             Exceptions.propagateIfFatal(e);
-            log.warn("Ignoring configuration attributes on "+typeName+" due to "+e, e);
+            if (e.toString().contains("Could not find")) {
+                // TODO currently we get this error if a catalog item is passed, giving stack trace is too scary;
+                // when we are doing catalog.createSpec let's remove this block
+                log.warn("Ignoring configuration attributes on "+typeName+", item probably loaded from catalog and flags are not yet supported here");
+                log.debug("Ignoring configuration attributes on "+typeName+", details: "+e);
+            } else {
+                log.warn("Ignoring configuration attributes on "+typeName+" due to "+e, e);
+            }
             return null;
         }
     }

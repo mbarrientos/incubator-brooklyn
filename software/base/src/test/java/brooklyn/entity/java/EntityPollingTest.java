@@ -27,7 +27,6 @@ import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
 
-import brooklyn.entity.basic.ApplicationBuilder;
 import brooklyn.entity.basic.Entities;
 import brooklyn.entity.basic.SoftwareProcess;
 import brooklyn.entity.java.UsesJmx.JmxAgentModes;
@@ -38,7 +37,6 @@ import brooklyn.event.feed.jmx.JmxFeed;
 import brooklyn.location.MachineLocation;
 import brooklyn.location.basic.SshMachineLocation;
 import brooklyn.test.EntityTestUtils;
-import brooklyn.test.GeneralisedDynamicMBean;
 import brooklyn.test.JmxService;
 import brooklyn.test.entity.TestApplication;
 import brooklyn.util.collections.MutableMap;
@@ -51,9 +49,6 @@ public class EntityPollingTest {
 
     private static final Logger LOG = LoggerFactory.getLogger(EntityPollingTest.class);
 
-    private static final int TIMEOUT_MS = 5000;
-    private static final int SHORT_WAIT = 250;
-    
     private JmxService jmxService;
     private TestApplication app;
     private SoftwareProcess entity;
@@ -72,7 +67,6 @@ public class EntityPollingTest {
     }
 
     private static final String attributeName = "myattrib";
-    private static final String opName = "myop";
 
     public static class SubVanillaJavaApp extends VanillaJavaAppImpl {
         private JmxFeed feed;
@@ -95,6 +89,7 @@ public class EntityPollingTest {
             if (feed != null) feed.stop();
         }
         
+        @SuppressWarnings({ "rawtypes", "unchecked" })
         @Override
         public Class getDriverInterface() {
             return null;
@@ -127,7 +122,7 @@ public class EntityPollingTest {
 
     @BeforeMethod(alwaysRun=true)
     public void setUp() {
-        app = ApplicationBuilder.newManagedApp(TestApplication.class);
+        app = TestApplication.Factory.newManagedInstanceForTests();
         
         /*
          * Create an entity, using real entity code, but that swaps out the external process
@@ -145,11 +140,11 @@ public class EntityPollingTest {
         if (jmxService != null) jmxService.shutdown();
     }
 
-	// Tests that the happy path works
+    // Tests that the happy path works
     @Test(groups="Integration")
     public void testSimpleConnection() throws Exception {
         jmxService = new JmxService("localhost", 40123);
-        GeneralisedDynamicMBean mbean = jmxService.registerMBean(ImmutableMap.of(attributeName, "myval"), objectName);
+        jmxService.registerMBean(ImmutableMap.of(attributeName, "myval"), objectName);
 
         app.start(ImmutableList.of(new SshMachineLocation(MutableMap.of("address", "localhost"))));
         
@@ -157,16 +152,16 @@ public class EntityPollingTest {
         EntityTestUtils.assertAttributeEqualsEventually(entity, stringAttribute, "myval");
     }
 
-	// Test that connect will keep retrying (e.g. start script returns before the JMX server is up)
+    // Test that connect will keep retrying (e.g. start script returns before the JMX server is up)
     @Test(groups="Integration")
     public void testEntityWithDelayedJmxStartupWillKeepRetrying() {
-		// In 2 seconds time, we'll start the JMX server
+        // In 2 seconds time, we'll start the JMX server
         Thread t = new Thread(new Runnable() {
             public void run() {
                 try {
                     Thread.sleep(2000);
                     jmxService = new JmxService("localhost", 40123);
-                    GeneralisedDynamicMBean mbean = jmxService.registerMBean(ImmutableMap.of(attributeName, "myval"), objectName);
+                    jmxService.registerMBean(ImmutableMap.of(attributeName, "myval"), objectName);
                 } catch (Exception e) {
                     LOG.error("Error in testEntityWithDelayedJmxStartupWillKeepRetrying", e);
                     throw Exceptions.propagate(e);
@@ -187,7 +182,7 @@ public class EntityPollingTest {
     @Test(groups="Integration")
     public void testJmxConnectionGoesDownRequiringReconnect() throws Exception {
         jmxService = new JmxService("localhost", 40123);
-        GeneralisedDynamicMBean mbean = jmxService.registerMBean(ImmutableMap.of(attributeName, "myval"), objectName);
+        jmxService.registerMBean(ImmutableMap.of(attributeName, "myval"), objectName);
 
         app.start(ImmutableList.of(new SshMachineLocation(MutableMap.of("address", "localhost"))));
         
@@ -197,12 +192,12 @@ public class EntityPollingTest {
         jmxService.shutdown();
         
         // TODO Want a better way of determining that the entity is down; ideally should have 
-		// sensor for entity-down that's wired up to a JMX attribute?
+        // sensor for entity-down that's wired up to a JMX attribute?
         Thread.sleep(5000);
 
         // Restart MBeanServer, and set attribute to different value; expect it to be polled again
         jmxService = new JmxService("localhost", 40123);
-        GeneralisedDynamicMBean mbean2 = jmxService.registerMBean(ImmutableMap.of(attributeName, "myval2"), objectName);
+        jmxService.registerMBean(ImmutableMap.of(attributeName, "myval2"), objectName);
         
         EntityTestUtils.assertAttributeEqualsEventually(entity, stringAttribute, "myval2");
     }

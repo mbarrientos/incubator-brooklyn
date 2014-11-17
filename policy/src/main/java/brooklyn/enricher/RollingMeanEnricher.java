@@ -20,17 +20,21 @@ package brooklyn.enricher;
 
 import java.util.LinkedList;
 
+import brooklyn.catalog.Catalog;
 import brooklyn.enricher.basic.AbstractTypeTransformingEnricher;
 import brooklyn.entity.Entity;
 import brooklyn.event.AttributeSensor;
 import brooklyn.event.SensorEvent;
 import brooklyn.util.flags.SetFromFlag;
+import brooklyn.util.javalang.JavaClassNames;
 
 
 /**
 * Transforms a sensor into a rolling average based on a fixed window size. This is useful for smoothing sample type metrics, 
 * such as latency or CPU time
 */
+//@Catalog(name="Rolling Mean", description="Transforms a sensor into a rolling average based on a fixed "
+//        + "window size. This is useful for smoothing sample type metrics, such as latency or CPU time")
 public class RollingMeanEnricher<T extends Number> extends AbstractTypeTransformingEnricher<T,Double> {
     private LinkedList<T> values = new LinkedList<T>();
     
@@ -44,6 +48,8 @@ public class RollingMeanEnricher<T extends Number> extends AbstractTypeTransform
             int windowSize) {
         super(producer, source, target);
         this.windowSize = windowSize;
+        if (source!=null && target!=null)
+            this.uniqueTag = JavaClassNames.simpleClassName(getClass())+":"+source.getName()+"->"+target.getName();
     }
     
     /** @returns null when no data has been received or windowSize is 0 */

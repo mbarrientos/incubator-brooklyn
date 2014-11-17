@@ -132,12 +132,12 @@ If you use Maven, you can add Brooklyn with the following in your pom:
     </dependencies>
 {% endhighlight %}
 
-`brooklyn-all` (used above) brings in all dependencies, including jclouds and Apache Whirr.
+`brooklyn-all` (used above) brings in all dependencies, including jclouds.
 If you prefer a smaller repo you might want just ``brooklyn-core``,  ``brooklyn-policies``, 
 and some of ``brooklyn-software-webapp``,  ``brooklyn-software-database``, ``brooklyn-software-messaging``, or others
 (browse the full list [here]({{ this_anything_url_search }})).
 
-If you wish to use the Sonatype and/or Cloudsoft repositories (particularly for snapshots),
+If you wish to use the Apache and/or Cloudsoft repositories (particularly for snapshots),
 you can add some of the following sections:
 
 {% highlight xml %}
@@ -148,9 +148,9 @@ you can add some of the following sections:
         </repository>
         <!-- optional for snapshot versions -->
         <repository>
-            <id>sonatype-nexus-snapshots</id>
-            <name>Sonatype Nexus Snapshots</name>
-            <url>https://oss.sonatype.org/content/repositories/snapshots</url>
+            <id>apache-nexus-snapshots</id>
+            <name>Apache Nexus Snapshots</name>
+            <url>https://repository.apache.org/content/repositories/snapshots</url>
             <releases> <enabled>false</enabled> </releases>
             <snapshots> <enabled>true</enabled> </snapshots>
         </repository>

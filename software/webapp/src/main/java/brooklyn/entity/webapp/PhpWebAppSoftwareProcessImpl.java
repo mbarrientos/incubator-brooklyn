@@ -1,25 +1,38 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
 package brooklyn.entity.webapp;
 
 import brooklyn.entity.Entity;
 import brooklyn.entity.annotation.Effector;
 import brooklyn.entity.annotation.EffectorParam;
 import brooklyn.entity.basic.SoftwareProcessImpl;
-import brooklyn.location.access.BrooklynAccessUtils;
+import brooklyn.util.text.Strings;
 import com.google.common.base.Throwables;
 import com.google.common.collect.Sets;
-import com.google.common.net.HostAndPort;
 import org.slf4j.LoggerFactory;
-
 import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import java.util.*;
-
+import java.util.LinkedHashMap;
+import java.util.Set;
+import java.util.Map;
 import static com.google.common.base.Preconditions.checkNotNull;
 
-/**
- * Created by Jose on 07/07/2014.
- */
+
 public abstract class PhpWebAppSoftwareProcessImpl extends SoftwareProcessImpl implements PhpWebAppSoftwareProcess{
     private static final Logger LOG= LoggerFactory.getLogger(PhpWebAppSoftwareProcessImpl.class);
 
@@ -61,15 +74,16 @@ public abstract class PhpWebAppSoftwareProcessImpl extends SoftwareProcessImpl i
         WebAppServiceMethods.connectWebAppServerPolicies(this);
     }
 
+
     @Override
-    protected void doStop(){
-        super.doStop();
+    protected void preStop(){
         //zero our workrate derived workrates.
         //TODO might not be enough, as a policy may still be executing and have a record of historic vals;
         // should remove policies
-        //also nor sure we want this; implies more generally a resposibility for sensor to announce things
-        //disconnected
+        // also nor sure we want this; implies more generally a resposibility for sensor to announce things
+        // disconnected
         putEnricherValuesToNullValue();
+        super.doStop();
     }
 
     private void putEnricherValuesToNullValue(){
@@ -77,40 +91,70 @@ public abstract class PhpWebAppSoftwareProcessImpl extends SoftwareProcessImpl i
         setAttribute(REQUESTS_PER_SECOND_IN_WINDOW, 0D);
     }
 
+
     // TODO thread-safety issues: if multiple concurrent calls, may break (e.g. deployment_wars being reset)
     public void deployInitialApplications() {
-        initDeployAppAttribteIfIsNull();
-        //LOG.warn("deploy applications {}: ", this);
+        initDeployAppAttributeIfIsNull();
         deployInitialAppGitSource();
+        deployInitialAppTarballResource();
     }
 
-    private void initDeployAppAttribteIfIsNull(){
+    private void initDeployAppAttributeIfIsNull(){
         if (getDeployedPhpAppsAttribute() == null)
             setDeployedPhpAppsAttribute(Sets.<String>newLinkedHashSet());
     }
 
     private void deployInitialAppGitSource() {
         String gitRepoUrl = getConfig(APP_GIT_REPO_URL);
-        if (gitRepoUrl!=null)
-            deploy(gitRepoUrl);
+        if (gitRepoUrl!=null){
+            String targetName=inferCorrectAppGitName();
+            deployGitResource(gitRepoUrl, targetName);
+        }
     }
 
-    @Effector(description="Deploys the given artifact, from a source URL, using the ")
-    public void deploy(
-            @EffectorParam(name="url", description="URL of WAR file") String url) {
+    private String inferCorrectAppGitName(){
+        String result;
+        if(Strings.isEmpty(getConfig(APP_NAME))){
+            result=getDriver().getSourceNameResolver().getNameOfRepositoryGitFromHttpsUrl(getConfig(APP_GIT_REPO_URL));
+        }
+        else{
+            result=getConfig(APP_NAME);
+        }
+        return result;
+    }
+
+    private void deployInitialAppTarballResource(){
+        String tarballResourceUrl = getConfig(APP_TARBALL_URL);
+        if (tarballResourceUrl!=null){
+            String targetName=inferCorrectAppTarballName();
+            deployTarballResource(tarballResourceUrl, targetName);
+        }
+    }
+
+    private String  inferCorrectAppTarballName(){
+        String result;
+        if(Strings.isEmpty(getConfig(APP_NAME))){
+            result=getDriver().getSourceNameResolver().getIdOfTarballFromUrl(getConfig(APP_TARBALL_URL));
+        }
+        else{
+            result=getConfig(APP_NAME);
+        }
+        return result;
+    }
+
+    public void deployGitResource(String url,String targetName) {
         try {
-            deployPhpApp(url);
+            deployGitPhpApp(url, targetName);
         } catch (RuntimeException e) {
-            // Log and propagate, so that log says which entity had problems...
-            //LOG.warn("Error deploying '"+url+"' on "+toString()+"; rethrowing...", e);
+            LOG.warn("Error deploying '"+url+"' on "+toString()+"; rethrowing...", e);
             throw Throwables.propagate(e);
         }
     }
 
-    private void deployPhpApp(String url){
+    private void deployGitPhpApp(String url, String targetName){
         checkNotNull(url, "url");
         PhpWebAppDriver driver =   getDriver();
-        String deployedAppName = driver.deploy(url);
+        String deployedAppName = driver.deployGitResource(url, targetName);
         updateDeploymentSensorToDeployAnApp(deployedAppName);
     }
 
@@ -123,6 +167,23 @@ public abstract class PhpWebAppSoftwareProcessImpl extends SoftwareProcessImpl i
         setDeployedPhpAppsAttribute(deployedPhpApps);
     }
 
+    public void deployTarballResource( String url, String targetName){
+        try {
+            deployTarballPhpApp(url, targetName);
+        } catch (RuntimeException e) {
+            LOG.warn("Error deploying '"+url+"' on "+toString()+"; rethrowing...", e);
+            throw Throwables.propagate(e);
+        }
+    }
+
+    private void deployTarballPhpApp(String url, String targetName){
+        //TODO deployment git resource
+        checkNotNull(url, "url");
+        PhpWebAppDriver driver =   getDriver();
+        String deployedAppName = driver.deployTarballResource(url, targetName);
+        updateDeploymentSensorToDeployAnApp(deployedAppName);
+    }
+
     /** For the DEPLOYED_PHP_APP to be updated, the input must match the result of the call to deploy */
     @Override
     @Effector(description="Undeploys the given context/artifact")
@@ -133,8 +194,7 @@ public abstract class PhpWebAppSoftwareProcessImpl extends SoftwareProcessImpl i
             undeployPhpApp(targetName);
 
         } catch (RuntimeException e) {
-            // Log and propagate, so that log says which entity had problems...
-           // LOG.warn("Error undeploying '"+targetName+"' on "+toString()+"; rethrowing...", e);
+            LOG.warn("Error undeploying '"+targetName+"' on "+toString()+"; rethrowing...", e);
             throw Throwables.propagate(e);
         }
     }
@@ -145,7 +205,7 @@ public abstract class PhpWebAppSoftwareProcessImpl extends SoftwareProcessImpl i
     }
 
     private void updateDeploymentSensorToUndeployAnApp(String targetName){
-        initDeployAppAttribteIfIsNull();
+        initDeployAppAttributeIfIsNull();
         Set<String> deployedPhpApps=getDeployedPhpAppsAttribute();
         deployedPhpApps.remove(targetName);
         setDeployedPhpAppsAttribute(deployedPhpApps);

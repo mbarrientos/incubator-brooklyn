@@ -31,52 +31,45 @@ import brooklyn.config.BrooklynProperties;
 import brooklyn.config.StringConfigMap;
 import brooklyn.management.ManagementContext;
 import brooklyn.rest.BrooklynWebConfig;
+import brooklyn.rest.security.PasswordHasher;
 
-/** security provider which validates users against passwords according to property keys,
- * as set in {@link BrooklynWebConfig#USERS} and {@link BrooklynWebConfig#PASSWORD_FOR_USER(String)}*/
-public class ExplicitUsersSecurityProvider implements SecurityProvider {
+/**
+ * Security provider which validates users against passwords according to property keys,
+ * as set in {@link BrooklynWebConfig#USERS} and {@link BrooklynWebConfig#PASSWORD_FOR_USER(String)}
+ */
+public class ExplicitUsersSecurityProvider extends AbstractSecurityProvider implements SecurityProvider {
 
     public static final Logger LOG = LoggerFactory.getLogger(ExplicitUsersSecurityProvider.class);
     
-    public static final String AUTHENTICATION_KEY = ExplicitUsersSecurityProvider.class.getCanonicalName()+"."+"AUTHENTICATED";
-
     protected final ManagementContext mgmt;
-    
+    private boolean allowAnyUserWithValidPass;
+    private Set<String> allowedUsers = null;
+
     public ExplicitUsersSecurityProvider(ManagementContext mgmt) {
         this.mgmt = mgmt;
     }
-    
-    @Override
-    public boolean isAuthenticated(HttpSession session) {
-        if (session==null) return false;
-        Object value = session.getAttribute(AUTHENTICATION_KEY);
-        return (value!=null);
-    }
 
-    private boolean allowAnyUserWithValidPass = false;
-    
-    private Set<String> allowedUsers = null;
-    
     private synchronized void initialize() {
-        if (allowedUsers!=null) return;
+        if (allowedUsers != null) return;
 
         StringConfigMap properties = mgmt.getConfig();
 
         allowedUsers = new LinkedHashSet<String>();
         String users = properties.getConfig(BrooklynWebConfig.USERS);
-        if (users==null) {
-            LOG.warn("Web console has no users configured; no one will be able to log in!");
+        if (users == null) {
+            LOG.warn("REST has no users configured; no one will be able to log in!");
         } else if ("*".equals(users)) {
-            LOG.info("Web console allowing any user (so long as valid password is set)");
+            LOG.info("REST allowing any user (so long as valid password is set)");
             allowAnyUserWithValidPass = true;
         } else {
             StringTokenizer t = new StringTokenizer(users, ",");
             while (t.hasMoreElements()) {
-                allowedUsers.add((""+t.nextElement()).trim());
+                allowedUsers.add(("" + t.nextElement()).trim());
             }
-            LOG.info("Web console allowing users: "+allowedUsers);
-        }       
+            LOG.info("REST allowing users: " + allowedUsers);
+        }
     }
+
     
     @Override
     public boolean authenticate(HttpSession session, String user, String password) {
@@ -86,36 +79,24 @@ public class ExplicitUsersSecurityProvider implements SecurityProvider {
         
         if (!allowAnyUserWithValidPass) {
             if (!allowedUsers.contains(user)) {
-                LOG.info("Web console rejecting unknown user "+user);
+                LOG.debug("REST rejecting unknown user "+user);
                 return false;                
             }
         }
 
         BrooklynProperties properties = (BrooklynProperties) mgmt.getConfig();
-        String actualP = properties.getConfig(BrooklynWebConfig.PASSWORD_FOR_USER(user));
-        if (actualP==null) {
-            LOG.warn("Web console rejecting passwordless user "+user);
-            return false;
-        } else if (!actualP.equals(password)){
-            LOG.info("Web console rejecting bad password for user "+user);
-            return false;
-        } else {
-            //password is good
-            return allow(session, user);
+        String expectedP = properties.getConfig(BrooklynWebConfig.PASSWORD_FOR_USER(user));
+        String salt = properties.getConfig(BrooklynWebConfig.SALT_FOR_USER(user));
+        String expectedSha256 = properties.getConfig(BrooklynWebConfig.SHA256_FOR_USER(user));
+        
+        if (expectedP != null) {
+            return expectedP.equals(password) && allow(session, user);
+        } else if (expectedSha256 != null) {
+            String hashedPassword = PasswordHasher.sha256(salt, password);
+            return expectedSha256.equals(hashedPassword) && allow(session, user);
         }
-    }
 
-    private boolean allow(HttpSession session, String user) {
-        LOG.debug("Web console "+getClass().getSimpleName()+" authenticated user "+user);
-        session.setAttribute(AUTHENTICATION_KEY, user);
-        return true;
-    }
-
-    @Override
-    public boolean logout(HttpSession session) { 
-        if (session==null) return false;
-        session.removeAttribute(AUTHENTICATION_KEY);
-        return true;
+        return false;
     }
 
 }

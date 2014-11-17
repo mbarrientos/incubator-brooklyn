@@ -32,6 +32,7 @@ import org.slf4j.LoggerFactory;
 import org.testng.collections.Maps;
 
 import brooklyn.config.BrooklynProperties;
+import brooklyn.config.BrooklynServerConfig;
 import brooklyn.entity.Application;
 import brooklyn.entity.Entity;
 import brooklyn.entity.rebind.Dumpers.Pointer;
@@ -44,6 +45,8 @@ import brooklyn.entity.trait.Identifiable;
 import brooklyn.location.Location;
 import brooklyn.management.ManagementContext;
 import brooklyn.management.ha.HighAvailabilityMode;
+import brooklyn.management.ha.ManagementNodeState;
+import brooklyn.management.ha.ManagementPlaneSyncRecordPersisterToObjectStore;
 import brooklyn.management.internal.LocalManagementContext;
 import brooklyn.management.internal.ManagementContextInternal;
 import brooklyn.mementos.BrooklynMemento;
@@ -60,7 +63,7 @@ public class RebindTestUtils {
 
     private static final Duration TIMEOUT = Duration.seconds(20);
 
-	public static <T> T serializeAndDeserialize(T memento) throws Exception {
+    public static <T> T serializeAndDeserialize(T memento) throws Exception {
         ObjectReplacer replacer = new ObjectReplacer() {
             private final Map<Pointer, Object> replaced = Maps.newLinkedHashMap();
 
@@ -80,22 +83,22 @@ public class RebindTestUtils {
             }
         };
 
-    	try {
-    	    return Serializers.reconstitute(memento, replacer);
-    	} catch (Exception e) {
-    	    try {
-    	        Dumpers.logUnserializableChains(memento, replacer);
-    	        //Dumpers.deepDumpSerializableness(memento);
-    	    } catch (Throwable t) {
-    	        LOG.warn("Error logging unserializable chains for memento "+memento+" (propagating original exception)", t);
-    	    }
-    	    throw e;
-    	}
+        try {
+            return Serializers.reconstitute(memento, replacer);
+        } catch (Exception e) {
+            try {
+                Dumpers.logUnserializableChains(memento, replacer);
+                //Dumpers.deepDumpSerializableness(memento);
+            } catch (Throwable t) {
+                LOG.warn("Error logging unserializable chains for memento "+memento+" (propagating original exception)", t);
+            }
+            throw e;
+        }
     }
     
-	public static void deleteMementoDir(String path) {
-	    deleteMementoDir(new File(path));
-	}
+    public static void deleteMementoDir(String path) {
+        deleteMementoDir(new File(path));
+    }
 
     public static void deleteMementoDir(File f) {
         FileBasedObjectStore.deleteCompletely(f);
@@ -139,6 +142,7 @@ public class RebindTestUtils {
         PersistenceObjectStore objectStore;
         Duration persistPeriod = Duration.millis(100);
         boolean forLive;
+        boolean emptyCatalog;
         
         ManagementContextBuilder(File mementoDir, ClassLoader classLoader) {
             this(classLoader, new FileBasedObjectStore(mementoDir));
@@ -171,20 +175,28 @@ public class RebindTestUtils {
             return this;
         }
 
+        public ManagementContextBuilder emptyCatalog() {
+            this.emptyCatalog = true;
+            return this;
+        }
+
+        public ManagementContextBuilder emptyCatalog(boolean val) {
+            this.emptyCatalog = val;
+            return this;
+        }
+
         public LocalManagementContext buildUnstarted() {
             LocalManagementContext unstarted;
+            BrooklynProperties properties = this.properties != null
+                    ? this.properties
+                    : BrooklynProperties.Factory.newDefault();
+            if (this.emptyCatalog) {
+                properties.putIfAbsent(BrooklynServerConfig.BROOKLYN_CATALOG_URL, "classpath://brooklyn-catalog-empty.xml");
+            }
             if (forLive) {
-                if (properties != null) {
-                    unstarted = new LocalManagementContext(properties);
-                } else {
-                    unstarted = new LocalManagementContext();
-                }
+                unstarted = new LocalManagementContext(properties);
             } else {
-                if (properties != null) {
-                    unstarted = new LocalManagementContextForTests(properties);
-                } else {
-                    unstarted = new LocalManagementContextForTests();
-                }
+                unstarted = new LocalManagementContextForTests(properties);
             }
             
             objectStore.injectManagementContext(unstarted);
@@ -195,13 +207,15 @@ public class RebindTestUtils {
                     classLoader);
             ((RebindManagerImpl) unstarted.getRebindManager()).setPeriodicPersistPeriod(persistPeriod);
             unstarted.getRebindManager().setPersister(newPersister, PersistenceExceptionHandlerImpl.builder().build());
+            // set the HA persister, in case any children want to use HA
+            unstarted.getHighAvailabilityManager().setPersister(new ManagementPlaneSyncRecordPersisterToObjectStore(unstarted, objectStore, classLoader));
             return unstarted;
         }
 
         public LocalManagementContext buildStarted() {
             LocalManagementContext unstarted = buildUnstarted();
             unstarted.getHighAvailabilityManager().disabled();
-            unstarted.getRebindManager().start();
+            unstarted.getRebindManager().startPersistence();
             return unstarted;
         }
 
@@ -211,8 +225,18 @@ public class RebindTestUtils {
         return rebind(mementoDir, classLoader, null);
     }
 
+    public static Application rebind(LocalManagementContext newManagementContext, ClassLoader classLoader) throws Exception {
+        return rebind(newManagementContext, classLoader, null);
+    }
+
+    public static Application rebind(LocalManagementContext newManagementContext, ClassLoader classLoader, RebindExceptionHandler exceptionHandler) throws Exception {
+        Collection<Application> newApps = rebindAll(newManagementContext, classLoader, exceptionHandler);
+        if (newApps.isEmpty()) throw new IllegalStateException("Application could not be rebinded; serialization probably failed");
+        return Iterables.getFirst(newApps, null);
+    }
+
     public static Application rebind(File mementoDir, ClassLoader classLoader, RebindExceptionHandler exceptionHandler) throws Exception {
-        Collection<Application> newApps = rebindAll(mementoDir, classLoader);
+        Collection<Application> newApps = rebindAll(mementoDir, classLoader, exceptionHandler);
         if (newApps.isEmpty()) throw new IllegalStateException("Application could not be rebinded; serialization probably failed");
         return Iterables.getFirst(newApps, null);
     }
@@ -223,16 +247,16 @@ public class RebindTestUtils {
 
     public static Collection<Application> rebindAll(File mementoDir, ClassLoader classLoader, RebindExceptionHandler exceptionHandler) throws Exception {
         LOG.info("Rebinding app, using directory "+mementoDir);
+        return rebindAll(newPersistingManagementContextUnstarted(mementoDir, classLoader), classLoader, exceptionHandler);
+    }
+    
+    public static Collection<Application> rebindAll(LocalManagementContext newManagementContext, ClassLoader classLoader, RebindExceptionHandler exceptionHandler) throws Exception {
+        LOG.info("Rebinding app");
 
-        LocalManagementContext newManagementContext = newPersistingManagementContextUnstarted(mementoDir, classLoader);
-        List<Application> newApps;
-        if (exceptionHandler == null) {
-            newApps = newManagementContext.getRebindManager().rebind(classLoader);
-        } else {
-            newApps = newManagementContext.getRebindManager().rebind(classLoader, exceptionHandler);
-        }
+        List<Application> newApps = newManagementContext.getRebindManager().rebind(classLoader, exceptionHandler, ManagementNodeState.MASTER);
+        
         if (newApps.isEmpty()) throw new IllegalStateException("Application could not be rebinded; serialization probably failed");
-        newManagementContext.getRebindManager().start();
+        newManagementContext.getRebindManager().startPersistence();
         return newApps;
     }
 
@@ -262,13 +286,8 @@ public class RebindTestUtils {
                 ((ManagementContextInternal)newManagementContext).getBrooklynProperties(),
                 classLoader);
         newManagementContext.getRebindManager().setPersister(newPersister, PersistenceExceptionHandlerImpl.builder().build());
-        List<Application> newApps;
-        if (exceptionHandler == null) {
-            newApps = newManagementContext.getRebindManager().rebind(classLoader);
-        } else {
-            newApps = newManagementContext.getRebindManager().rebind(classLoader, exceptionHandler);
-        }
-        newManagementContext.getRebindManager().start();
+        List<Application> newApps = newManagementContext.getRebindManager().rebind(classLoader, exceptionHandler, ManagementNodeState.MASTER);
+        newManagementContext.getRebindManager().startPersistence();
         return newApps;
     }
 

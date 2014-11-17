@@ -23,7 +23,9 @@ import javax.annotation.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import brooklyn.catalog.CatalogItem;
 import brooklyn.entity.Entity;
+import brooklyn.entity.Feed;
 import brooklyn.location.Location;
 import brooklyn.management.ManagementContext;
 import brooklyn.mementos.BrooklynMementoPersister.LookupContext;
@@ -32,6 +34,7 @@ import brooklyn.policy.Policy;
 
 public class RebindContextLookupContext implements LookupContext {
     
+    @SuppressWarnings("unused")
     private static final Logger LOG = LoggerFactory.getLogger(RebindContextLookupContext.class);
     
     @Nullable
@@ -81,6 +84,23 @@ public class RebindContextLookupContext implements LookupContext {
         Enricher result = rebindContext.getEnricher(id);
         if (result == null) {
             result = exceptionHandler.onDanglingEnricherRef(id);
+        }
+        return result;
+    }
+
+    @Override public Feed lookupFeed(String id) {
+        Feed result = rebindContext.getFeed(id);
+        if (result == null) {
+            result = exceptionHandler.onDanglingFeedRef(id);
+        }
+        return result;
+    }
+
+    @Override
+    public CatalogItem<?, ?> lookupCatalogItem(String id) {
+        CatalogItem<?, ?> result = rebindContext.getCatalogItem(id);
+        if (result == null) {
+            result = exceptionHandler.onDanglingCatalogItemRef(id);
         }
         return result;
     }

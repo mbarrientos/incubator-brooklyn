@@ -30,6 +30,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import brooklyn.util.exceptions.Exceptions;
+import brooklyn.util.exceptions.ReferenceWithError;
 import brooklyn.util.time.CountdownTimer;
 import brooklyn.util.time.Duration;
 import brooklyn.util.time.Time;
@@ -38,6 +39,7 @@ import com.google.common.base.Function;
 import com.google.common.base.Functions;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Predicate;
+import com.google.common.base.Stopwatch;
 import com.google.common.util.concurrent.Callables;
 
 /**
@@ -300,6 +302,18 @@ public class Repeater {
      * @return true if the exit condition was satisfied; false if the loop terminated for any other reason.
      */
     public boolean run() {
+        return runKeepingError().getWithoutError();
+    }
+    
+    public void runRequiringTrue() {
+        Stopwatch timer = Stopwatch.createStarted();
+        ReferenceWithError<Boolean> result = runKeepingError();
+        result.checkNoError();
+        if (!result.get()) 
+            throw new IllegalStateException(description+" unsatisfied after "+Duration.of(timer));
+    }
+    
+    public ReferenceWithError<Boolean> runKeepingError() {
         Preconditions.checkState(body != null, "repeat() method has not been called to set the body");
         Preconditions.checkState(exitCondition != null, "until() method has not been called to set the exit condition");
         Preconditions.checkState(delayOnIteration != null, "every() method (or other delaySupplier() / backoff() method) has not been called to set the loop delay");
@@ -330,7 +344,7 @@ public class Repeater {
             }
             if (done) {
                 if (log.isDebugEnabled()) log.debug("{}: condition satisfied", description);
-                return true;
+                return ReferenceWithError.newInstanceWithoutError(true);
             } else {
                 if (log.isDebugEnabled()) {
                     String msg = String.format("%s: unsatisfied during iteration %s %s", description, iterations,
@@ -352,7 +366,7 @@ public class Repeater {
                 }
                 if (warnOnUnRethrownException && lastError != null)
                     log.warn("{}: error caught checking condition: {}", description, lastError.getMessage());
-                return false;
+                return ReferenceWithError.newInstanceMaskingError(false, lastError);
             }
 
             if (timer.isExpired()) {
@@ -362,10 +376,19 @@ public class Repeater {
                     log.error("{}: error caught checking condition: {}", description, lastError.getMessage());
                     throw Exceptions.propagate(lastError);
                 }
-                return false;
+                return ReferenceWithError.newInstanceMaskingError(false, lastError);
             }
 
             Time.sleep(delayThisIteration);
         }
     }
+    
+    public String getDescription() {
+        return description;
+    }
+
+    public Duration getTimeLimit() {
+        return timeLimit;
+    }
+    
 }

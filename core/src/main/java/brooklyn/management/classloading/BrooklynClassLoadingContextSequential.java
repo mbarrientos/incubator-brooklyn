@@ -1,3 +1,21 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
 package brooklyn.management.classloading;
 
 import java.net.URL;
@@ -7,12 +25,13 @@ import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.google.common.base.Objects;
-
 import brooklyn.management.ManagementContext;
 import brooklyn.util.collections.MutableList;
 import brooklyn.util.collections.MutableSet;
+import brooklyn.util.exceptions.Exceptions;
 import brooklyn.util.guava.Maybe;
+
+import com.google.common.base.Objects;
 
 public final class BrooklynClassLoadingContextSequential extends AbstractBrooklynClassLoadingContext {
 
@@ -48,18 +67,23 @@ public final class BrooklynClassLoadingContextSequential extends AbstractBrookly
     }
     
     public Maybe<Class<?>> tryLoadClass(String className) {
+        List<Throwable> errors = MutableList.of();
         for (BrooklynClassLoadingContext target: primaries) {
             Maybe<Class<?>> clazz = target.tryLoadClass(className);
             if (clazz.isPresent())
                 return clazz;
+            errors.add( ((Maybe.Absent<?>)clazz).getException() );
         }
+        boolean noPrimaryErrors = errors.isEmpty();
         for (BrooklynClassLoadingContext target: secondaries) {
             Maybe<Class<?>> clazz = target.tryLoadClass(className);
             if (clazz.isPresent())
                 return clazz;
+            if (noPrimaryErrors)
+                errors.add( ((Maybe.Absent<?>)clazz).getException() );
         }
 
-        return Maybe.absent("Unable to load "+className+" from "+primaries);
+        return Maybe.absent(Exceptions.create("Unable to load "+className+" from "+primaries, errors));
     }
 
 

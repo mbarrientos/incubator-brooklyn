@@ -21,8 +21,6 @@ package brooklyn.rest;
 import java.util.ArrayList;
 import java.util.List;
 
-import org.codehaus.jackson.jaxrs.JacksonJsonProvider;
-
 import brooklyn.rest.apidoc.ApidocHelpMessageBodyWriter;
 import brooklyn.rest.resources.AbstractBrooklynRestResource;
 import brooklyn.rest.resources.AccessResource;
@@ -42,9 +40,12 @@ import brooklyn.rest.resources.ServerResource;
 import brooklyn.rest.resources.UsageResource;
 import brooklyn.rest.resources.VersionResource;
 import brooklyn.rest.util.DefaultExceptionMapper;
+import brooklyn.rest.util.FormMapProvider;
+import brooklyn.rest.util.json.BrooklynJacksonJsonProvider;
 
 import com.google.common.collect.Iterables;
 
+@SuppressWarnings("deprecation")
 public class BrooklynRestApi {
 
     public static Iterable<AbstractBrooklynRestResource> getBrooklynRestResources() {
@@ -77,7 +78,8 @@ public class BrooklynRestApi {
     public static Iterable<Object> getMiscResources() {
         List<Object> resources = new ArrayList<Object>();
         resources.add(new DefaultExceptionMapper());
-        resources.add(new JacksonJsonProvider());
+        resources.add(new BrooklynJacksonJsonProvider());
+        resources.add(new FormMapProvider());
         return resources;
     }
 

@@ -27,18 +27,22 @@ import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import brooklyn.basic.BrooklynObject;
+import brooklyn.catalog.CatalogItem;
 import brooklyn.entity.Entity;
+import brooklyn.entity.Feed;
 import brooklyn.entity.basic.EntityLocal;
 import brooklyn.entity.rebind.RebindManager.RebindFailureMode;
 import brooklyn.location.Location;
 import brooklyn.policy.Enricher;
 import brooklyn.policy.Policy;
-import brooklyn.util.exceptions.CompoundRuntimeException;
 import brooklyn.util.exceptions.Exceptions;
+import brooklyn.util.text.Strings;
 
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 
+/** Stateful handler, meant for a single rebind pass */
 public class RebindExceptionHandlerImpl implements RebindExceptionHandler {
 
     private static final Logger LOG = LoggerFactory.getLogger(RebindExceptionHandlerImpl.class);
@@ -52,13 +56,15 @@ public class RebindExceptionHandlerImpl implements RebindExceptionHandler {
     protected final Set<String> missingLocations = Sets.newConcurrentHashSet();
     protected final Set<String> missingPolicies = Sets.newConcurrentHashSet();
     protected final Set<String> missingEnrichers = Sets.newConcurrentHashSet();
-    protected final Set<String> creationFailedEntities = Sets.newConcurrentHashSet();
-    protected final Set<String> creationFailedLocations = Sets.newConcurrentHashSet();
-    protected final Set<String> creationFailedPolicies = Sets.newConcurrentHashSet();
-    protected final Set<String> creationFailedEnrichers = Sets.newConcurrentHashSet();
+    protected final Set<String> missingFeeds = Sets.newConcurrentHashSet();
+    protected final Set<String> missingCatalogItems = Sets.newConcurrentHashSet();
+    protected final Set<String> creationFailedIds = Sets.newConcurrentHashSet();
     protected final Set<Exception> addPolicyFailures = Sets.newConcurrentHashSet();
     protected final Set<Exception> loadPolicyFailures = Sets.newConcurrentHashSet();
     protected final List<Exception> exceptions = Collections.synchronizedList(Lists.<Exception>newArrayList());
+    
+    protected boolean started = false;
+    protected boolean done = false;
     
     public static Builder builder() {
         return new Builder();
@@ -97,65 +103,43 @@ public class RebindExceptionHandlerImpl implements RebindExceptionHandler {
         this.addPolicyFailureMode = checkNotNull(builder.addPolicyFailureMode, "addPolicyFailureMode");
         this.loadPolicyFailureMode = checkNotNull(builder.deserializePolicyFailureMode, "deserializePolicyFailureMode");
     }
-    
-    @Override
-    public void onLoadBrooklynMementoFailed(String msg, Exception e) {
-        onLoadMementoFailure(msg, e);
+
+    public void onStart() {
+        if (done) {
+            throw new IllegalStateException(this+" has already been used on a finished run");
+        }
+        if (started) {
+            throw new IllegalStateException(this+" has already been used on a started run");
+        }
+        started = true;
     }
     
     @Override
-    public void onLoadLocationMementoFailed(String msg, Exception e) {
-        onLoadMementoFailure(msg, e);
-    }
-    
-    @Override
-    public void onLoadEntityMementoFailed(String msg, Exception e) {
-        onLoadMementoFailure(msg, e);
-    }
-    
-    @Override
-    public void onLoadPolicyMementoFailed(String msg, Exception e) {
+    public void onLoadMementoFailed(BrooklynObjectType type, String msg, Exception e) {
         Exceptions.propagateIfFatal(e);
         String errmsg = "problem loading memento: "+msg;
         
-        switch (loadPolicyFailureMode) {
-        case FAIL_FAST:
-            throw new IllegalStateException("Rebind: aborting due to "+errmsg, e);
-        case FAIL_AT_END:
-            loadPolicyFailures.add(new IllegalStateException(errmsg, e));
-            break;
-        case CONTINUE:
-            LOG.warn(errmsg+"; continuing", e);
-            break;
-        default:
-            throw new IllegalStateException("Unexpected state '"+loadPolicyFailureMode+"' for loadPolicyFailureMode");
+        switch (type) {
+            case FEED:
+            case POLICY:
+            case ENRICHER:
+                switch (loadPolicyFailureMode) {
+                    case FAIL_FAST:
+                        throw new IllegalStateException("Rebind: aborting due to "+errmsg, e);
+                    case FAIL_AT_END:
+                        loadPolicyFailures.add(new IllegalStateException(errmsg, e));
+                        break;
+                    case CONTINUE:
+                        LOG.warn(errmsg+"; continuing", e);
+                        break;
+                    default:
+                        throw new IllegalStateException("Unexpected state '"+loadPolicyFailureMode+"' for loadPolicyFailureMode");
+                }
+                break;
+            default:
+                exceptions.add(new IllegalStateException(errmsg, e));
+                onErrorImpl(errmsg, e);
         }
-    }
-    
-    @Override
-    public void onLoadEnricherMementoFailed(String msg, Exception e) {
-        Exceptions.propagateIfFatal(e);
-        String errmsg = "problem loading memento: "+msg;
-        
-        switch (loadPolicyFailureMode) {
-        case FAIL_FAST:
-            throw new IllegalStateException("Rebind: aborting due to "+errmsg, e);
-        case FAIL_AT_END:
-            loadPolicyFailures.add(new IllegalStateException(errmsg, e));
-            break;
-        case CONTINUE:
-            LOG.warn(errmsg+"; continuing", e);
-            break;
-        default:
-            throw new IllegalStateException("Unexpected state '"+loadPolicyFailureMode+"' for loadPolicyFailureMode");
-        }
-    }
-    
-    protected void onLoadMementoFailure(String msg, Exception e) {
-        Exceptions.propagateIfFatal(e);
-        String errmsg = "problem loading memento: "+msg;
-        exceptions.add(new IllegalStateException(errmsg, e));
-        onErrorImpl(errmsg, e);
     }
 
     @Override
@@ -203,151 +187,74 @@ public class RebindExceptionHandlerImpl implements RebindExceptionHandler {
     }
 
     @Override
-    public void onCreateLocationFailed(String id, String type, Exception e) {
+    public Feed onDanglingFeedRef(String id) {
+        missingFeeds.add(id);
+        if (danglingRefFailureMode == RebindManager.RebindFailureMode.FAIL_FAST) {
+            throw new IllegalStateException("No feed found with id "+id);
+        } else {
+            LOG.warn("No feed found with id "+id+"; returning null");
+            return null;
+        }
+    }
+
+    @Override
+    public CatalogItem<?, ?> onDanglingCatalogItemRef(String id) {
+        missingCatalogItems.add(id);
+        if (danglingRefFailureMode == RebindManager.RebindFailureMode.FAIL_FAST) {
+            throw new IllegalStateException("No catalog item found with id "+id);
+        } else {
+            LOG.warn("No catalog item found with id "+id+"; returning null");
+            return null;
+        }
+    }
+
+    @Override
+    public void onCreateFailed(BrooklynObjectType type, String id, String instanceType, Exception e) {
         Exceptions.propagateIfFatal(e);
-        String errmsg = "problem creating location "+id+" of type "+type;
-        creationFailedLocations.add(id);
+        String errmsg = "problem creating "+type+" "+id+" of type "+instanceType;
+        creationFailedIds.add(id);
         exceptions.add(new IllegalStateException(errmsg, e));
         onErrorImpl(errmsg, e);
     }
 
     @Override
-    public void onCreateEntityFailed(String id, String type, Exception e) {
-        Exceptions.propagateIfFatal(e);
-        String errmsg = "problem creating entity "+id+" of type "+type;
-        creationFailedEntities.add(id);
-        exceptions.add(new IllegalStateException(errmsg, e));
-        onErrorImpl(errmsg, e);
-    }
-
-
-    @Override
-    public void onCreatePolicyFailed(String id, String type, Exception e) {
-        Exceptions.propagateIfFatal(e);
-        String errmsg = "problem creating policy "+id+" of type "+type;
-        creationFailedPolicies.add(id);
-        exceptions.add(new IllegalStateException(errmsg, e));
-        onErrorImpl(errmsg, e);
-    }
-    
-    @Override
-    public void onCreateEnricherFailed(String id, String type, Exception e) {
-        Exceptions.propagateIfFatal(e);
-        String errmsg = "problem creating policy "+id+" of type "+type;
-        creationFailedEnrichers.add(id);
-        exceptions.add(new IllegalStateException(errmsg, e));
-        onErrorImpl(errmsg, e);
-    }
-
-    @Override
-    public void onLocationNotFound(String id) {
-        if (creationFailedLocations.contains(id)) {
+    public void onNotFound(BrooklynObjectType type, String id) {
+        if (creationFailedIds.contains(id)) {
             // already know about this; ignore
         } else {
-            String errmsg = "location '"+id+"' not found";
+            String errmsg = type.toCamelCase()+" '"+id+"' not found";
             exceptions.add(new IllegalStateException(errmsg));
             onErrorImpl(errmsg);
         }
     }
     
     @Override
-    public void onEntityNotFound(String id) {
-        if (creationFailedEntities.contains(id)) {
-            // already know about this; ignore
-        } else {
-            String errmsg = "entity '"+id+"' not found";
-            exceptions.add(new IllegalStateException(errmsg));
-            onErrorImpl(errmsg);
-        }
-    }
-
-    @Override
-    public void onPolicyNotFound(String id) {
-        onPolicyNotFound(id, null);
-    }
-    
-    @Override
-    public void onPolicyNotFound(String id, String context) {
-        if (creationFailedPolicies.contains(id)) {
-            // already know about this; ignore
-        } else {
-            String errmsg = "policy '"+id+"' not found" + (context == null ? "" : "("+context+")");
-            exceptions.add(new IllegalStateException(errmsg));
-            onErrorImpl(errmsg);
-        }
-    }
-
-    @Override
-    public void onEnricherNotFound(String id) {
-        onEnricherNotFound(id, null);
-    }
-    
-    @Override
-    public void onEnricherNotFound(String id, String context) {
-        if (creationFailedEnrichers.contains(id)) {
-            // already know about this; ignore
-        } else {
-            String errmsg = "enricher '"+id+"' not found" + (context == null ? "" : "("+context+")");
-            exceptions.add(new IllegalStateException(errmsg));
-            onErrorImpl(errmsg);
-        }
-    }
-
-    @Override
-    public void onRebindLocationFailed(Location location, Exception e) {
+    public void onRebindFailed(BrooklynObjectType type, BrooklynObject instance, Exception e) {
         Exceptions.propagateIfFatal(e);
-        String errmsg = "problem rebinding location "+location.getId()+" ("+location+")";
+        String errmsg = "problem rebinding "+type.toCamelCase()+" "+instance.getId()+" ("+instance+")";
         
-        exceptions.add(new IllegalStateException(errmsg, e));
-        onErrorImpl(errmsg, e);
-    }
-
-    @Override
-    public void onRebindEntityFailed(Entity entity, Exception e) {
-        Exceptions.propagateIfFatal(e);
-        String errmsg = "problem rebinding entity "+entity.getId()+" ("+entity+")";
-        
-        exceptions.add(new IllegalStateException(errmsg, e));
-        onErrorImpl(errmsg, e);
-    }
-
-    @Override
-    public void onRebindPolicyFailed(Policy policy, Exception e) {
-        Exceptions.propagateIfFatal(e);
-        String errmsg = "problem rebinding plicy "+policy.getId()+" ("+policy+")";
-        
-        switch (addPolicyFailureMode) {
-        case FAIL_FAST:
-            throw new IllegalStateException("Rebind: aborting due to "+errmsg, e);
-        case FAIL_AT_END:
-            addPolicyFailures.add(new IllegalStateException(errmsg, e));
-            break;
-        case CONTINUE:
-            LOG.warn(errmsg+"; continuing", e);
-            creationFailedPolicies.add(policy.getId());
+        switch (type) {
+        case FEED:
+        case ENRICHER:
+        case POLICY:
+            switch (addPolicyFailureMode) {
+            case FAIL_FAST:
+                throw new IllegalStateException("Rebind: aborting due to "+errmsg, e);
+            case FAIL_AT_END:
+                addPolicyFailures.add(new IllegalStateException(errmsg, e));
+                break;
+            case CONTINUE:
+                LOG.warn(errmsg+"; continuing", e);
+                creationFailedIds.add(instance.getId());
+                break;
+            default:
+                throw new IllegalStateException("Unexpected state '"+addPolicyFailureMode+"' for addPolicyFailureMode");
+            }
             break;
         default:
-            throw new IllegalStateException("Unexpected state '"+addPolicyFailureMode+"' for addPolicyFailureMode");
-        }
-    }
-
-    @Override
-    public void onRebindEnricherFailed(Enricher enricher, Exception e) {
-        Exceptions.propagateIfFatal(e);
-        String errmsg = "problem rebinding enricher "+enricher.getId()+" ("+enricher+")";
-        
-        switch (addPolicyFailureMode) {
-        case FAIL_FAST:
-            throw new IllegalStateException("Rebind: aborting due to "+errmsg, e);
-        case FAIL_AT_END:
-            addPolicyFailures.add(new IllegalStateException(errmsg, e));
+            exceptions.add(new IllegalStateException(errmsg, e));
+            onErrorImpl(errmsg, e);
             break;
-        case CONTINUE:
-            LOG.warn(errmsg+"; continuing", e);
-            creationFailedEnrichers.add(enricher.getId());
-            break;
-        default:
-            throw new IllegalStateException("Unexpected state '"+addPolicyFailureMode+"' for addPolicyFailureMode");
         }
     }
 
@@ -390,23 +297,33 @@ public class RebindExceptionHandlerImpl implements RebindExceptionHandler {
     }
 
     @Override
-    public void onManageLocationFailed(Location location, Exception e) {
+    public void onAddFeedFailed(EntityLocal entity, Feed feed, Exception e) {
         Exceptions.propagateIfFatal(e);
-        String errmsg = "problem managing location "+location.getId()+" ("+location+")";
+        String errmsg = "problem adding feed "+feed.getId()+" ("+feed+") to entity "+entity.getId()+" ("+entity+")";
+
+        switch (addPolicyFailureMode) {
+        case FAIL_FAST:
+            throw new IllegalStateException("Rebind: aborting due to "+errmsg, e);
+        case FAIL_AT_END:
+            addPolicyFailures.add(new IllegalStateException(errmsg, e));
+            break;
+        case CONTINUE:
+            LOG.warn(errmsg+"; continuing", e);
+            break;
+        default:
+            throw new IllegalStateException("Unexpected state '"+addPolicyFailureMode+"' for addPolicyFailureMode");
+        }
+    }
+
+    @Override
+    public void onManageFailed(BrooklynObjectType type, BrooklynObject instance, Exception e) {
+        Exceptions.propagateIfFatal(e);
+        String errmsg = "problem managing "+type.toCamelCase()+" "+instance.getId()+" ("+instance+")";
         
         exceptions.add(new IllegalStateException(errmsg, e));
         onErrorImpl(errmsg, e);
     }
 
-    @Override
-    public void onManageEntityFailed(Entity entity, Exception e) {
-        Exceptions.propagateIfFatal(e);
-        String errmsg = "problem managing entity "+entity.getId()+" ("+entity+")";
-        
-        exceptions.add(new IllegalStateException(errmsg, e));
-        onErrorImpl(errmsg, e);
-    }
-    
     protected void onErrorImpl(String errmsg) {
         onErrorImpl(errmsg, null);
     }
@@ -415,6 +332,11 @@ public class RebindExceptionHandlerImpl implements RebindExceptionHandler {
         if (rebindFailureMode == RebindManager.RebindFailureMode.FAIL_FAST) {
             throw new IllegalStateException("Rebind: aborting due to "+errmsg, e);
         } else {
+            if (Thread.currentThread().isInterrupted()) {
+                if (LOG.isDebugEnabled())
+                    LOG.debug("Rebind: while interrupted, received "+errmsg+"/"+e+"; throwing interruption", e);
+                throw Exceptions.propagate(new InterruptedException("Detected interruptiong while not sleeping, due to secondary error rebinding: "+errmsg+"/"+e));
+            }
             LOG.warn("Rebind: continuing after "+errmsg, e);
         }
     }
@@ -426,18 +348,29 @@ public class RebindExceptionHandlerImpl implements RebindExceptionHandler {
 
     @Override
     public RuntimeException onFailed(Exception e) {
+        if (done) 
+            throw Exceptions.propagate(e);
+        
         onDoneImpl(e);
         throw new IllegalStateException("Rebind failed", e); // should have thrown exception above
     }
     
     protected void onDoneImpl(Exception e) {
-        if (e != null) Exceptions.propagateIfFatal(e);
+        Exceptions.propagateIfFatal(e);
         
         List<Exception> allExceptions = Lists.newArrayList();
         
+        if (done) {
+            allExceptions.add(new IllegalStateException(this+" has already been informed of rebind done"));
+        }
+        done = true;
+        if (!started) {
+            allExceptions.add(new IllegalStateException(this+" was not informed of start of rebind run"));
+        }
         if (e != null) {
             allExceptions.add(e);
         }
+        
         if (addPolicyFailureMode != RebindManager.RebindFailureMode.CONTINUE) {
             allExceptions.addAll(addPolicyFailures);
         }
@@ -445,17 +378,23 @@ public class RebindExceptionHandlerImpl implements RebindExceptionHandler {
             allExceptions.addAll(loadPolicyFailures);
         }
         if (danglingRefFailureMode != RebindManager.RebindFailureMode.CONTINUE) {
-            if (missingEntities.size() > 0) {
-                allExceptions.add(new IllegalStateException("Missing referenced entit"+(missingEntities.size() == 1 ? "y" : "ies")+": "+missingEntities));
+            if (!missingEntities.isEmpty()) {
+                allExceptions.add(new IllegalStateException("Missing referenced entit" + Strings.ies(missingEntities) + ": " + missingEntities));
             }
-            if (missingLocations.size() > 0) {
-                allExceptions.add(new IllegalStateException("Missing referenced location"+(missingLocations.size() == 1 ? "" : "s")+": "+missingLocations));
+            if (!missingLocations.isEmpty()) {
+                allExceptions.add(new IllegalStateException("Missing referenced location" + Strings.s(missingLocations) + ": " + missingLocations));
             }
-            if (missingPolicies.size() > 0) {
-                allExceptions.add(new IllegalStateException("Missing referenced polic"+(missingPolicies.size() == 1 ? "y" : "ies")+": "+missingPolicies));
+            if (!missingPolicies.isEmpty()) {
+                allExceptions.add(new IllegalStateException("Missing referenced polic" + Strings.ies(missingPolicies) + ": " + ": " + missingPolicies));
             }
-            if (missingEnrichers.size() > 0) {
-                allExceptions.add(new IllegalStateException("Missing referenced enricher"+(missingEnrichers.size() == 1 ? "" : "s")+": "+missingEnrichers));
+            if (!missingEnrichers.isEmpty()) {
+                allExceptions.add(new IllegalStateException("Missing referenced enricher" + Strings.s(missingEnrichers) + ": " + missingEnrichers));
+            }
+            if (!missingFeeds.isEmpty()) {
+                allExceptions.add(new IllegalStateException("Missing referenced feed" + Strings.s(missingFeeds) + ": " + missingFeeds));
+            }
+            if (!missingCatalogItems.isEmpty()) {
+                allExceptions.add(new IllegalStateException("Missing referenced catalog item" + Strings.s(missingCatalogItems) + ": " + missingCatalogItems));
             }
         }
         if (rebindFailureMode != RebindManager.RebindFailureMode.CONTINUE) {
@@ -465,8 +404,8 @@ public class RebindExceptionHandlerImpl implements RebindExceptionHandler {
         if (allExceptions.isEmpty()) {
             return; // no errors
         } else {
-            CompoundRuntimeException compoundException = new CompoundRuntimeException("Problem"+(allExceptions.size() == 1 ? "" : "s")+" rebinding", allExceptions);
-            LOG.info("RebindManager failed (throwing): "+compoundException.toString());
+            RuntimeException compoundException = Exceptions.create("Failure rebinding", allExceptions);
+            LOG.debug(compoundException.getMessage()+" (rethrowing)");
             throw compoundException;
         }
     }

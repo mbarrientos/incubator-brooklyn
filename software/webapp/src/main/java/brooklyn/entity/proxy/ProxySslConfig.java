@@ -24,55 +24,81 @@ import com.google.common.base.Objects;
 
 public class ProxySslConfig implements Serializable {
 
-    /** 
-     * url's for the SSL certificates required at the server
+    private static final long serialVersionUID = -2692754611458939617L;
+
+    public static Builder builder() {
+        return new Builder();
+    }
+
+    public static class Builder {
+        protected String certificateSourceUrl;
+        protected String keySourceUrl;
+        protected String certificateDestination;
+        protected String keyDestination;
+        protected boolean targetIsSsl = false;
+        protected boolean reuseSessions = false;
+
+        public Builder certificateSourceUrl(String val) {
+            certificateSourceUrl = val; return this;
+        }
+        public Builder keySourceUrl(String val) {
+            keySourceUrl = val; return this;
+        }
+        public Builder certificateDestination(String val) {
+            certificateDestination = val; return this;
+        }
+        public Builder keyDestination(String val) {
+            keyDestination = val; return this;
+        }
+        public Builder targetIsSsl(boolean val) {
+            targetIsSsl = val; return this;
+        }
+        public Builder reuseSessions(boolean val) {
+            reuseSessions = val; return this;
+        }
+        public ProxySslConfig build() {
+            ProxySslConfig result = new ProxySslConfig(this);
+            return result;
+        }
+    }
+
+    private String certificateSourceUrl;
+    private String keySourceUrl;
+    private String certificateDestination;
+    private String keyDestination;
+    private boolean targetIsSsl = false;
+    private boolean reuseSessions = false;
+
+    public ProxySslConfig() { }
+
+    protected ProxySslConfig(Builder builder) {
+        certificateSourceUrl = builder.certificateSourceUrl;
+        keySourceUrl = builder.keySourceUrl;
+        certificateDestination = builder.certificateDestination;
+        keyDestination = builder.keyDestination;
+        targetIsSsl = builder.targetIsSsl;
+        reuseSessions = builder.reuseSessions;
+    }
+
+    /**
+     * URL for the SSL certificates required at the server.
      * <p>
-     * nginx settings:
+     * Corresponding nginx settings:
+     * <pre>
      *     ssl                  on;
      *     ssl_certificate      www.example.com.crt;
      *     ssl_certificate_key  www.example.com.key;
-     *  <p>
-     *  okay (in nginx) for key to be null if certificate contains both as per setup at
-     *  http://nginx.org/en/docs/http/configuring_https_servers.html
-     *  <p>
-     *  proxy object can be set on nginx instance to apply site-wide,
-     *  and to put multiple servers in the certificate file
-     *  <p>
-     *  the brooklyn entity will install the certificate/key(s) on the server.
-     *  (however it will not currently merge multiple certificates.
-     *  if conflicting certificates are attempted to be installed nginx will complain.) 
+     * </pre>
+     * Okay (in nginx) for key to be null if certificate contains both as per setup at
+     * http://nginx.org/en/docs/http/configuring_https_servers.html
+     * <p>
+     * Proxy object can be set on nginx instance to apply site-wide,
+     * and to put multiple servers in the certificate file
+     * <p>
+     * The brooklyn entity will install the certificate/key(s) on the server.
+     * (however it will not currently merge multiple certificates.
+     * if conflicting certificates are attempted to be installed nginx will complain.)
      */
-    String certificateSourceUrl;
-
-    String keySourceUrl;
-
-    /**
-     * Sets the ssl_certificate path to be used within the generated LoadBalancer configuration. If set to null,
-     * Brooklyn will use an auto generated path.
-     *
-     * If certificateSourceUrl, then Brooklyn will copy the certificate the certificateDestination.
-     *
-     * Setting this field is useful if there is a certificate on the nginx machine you want to make use of.
-     */
-    String certificateDestination;
-
-    /**
-     * Sets the ssl_certificate_key path to be used within the generated LoadBalancer configuration. If set to null,
-     * Brooklyn will use an auto generated path.
-     *
-     * If keySourceUrl, then Brooklyn will copy the certificate the keyDestination.
-     *
-     * Setting this field is useful if there is a certificate_key on the nginx machine you want to make use of.
-     */
-    String keyDestination;
-
-    /** whether the downstream server (if mapping) also expects https; default false */
-    boolean targetIsSsl = false;
-
-    /** whether to reuse SSL validation in the server (performance).
-     * corresponds to nginx setting: proxy_ssl_session_reuse on|off */
-    boolean reuseSessions = false;
-
     public String getCertificateSourceUrl() {
         return certificateSourceUrl;
     }
@@ -81,6 +107,7 @@ public class ProxySslConfig implements Serializable {
         this.certificateSourceUrl = certificateSourceUrl;
     }
 
+    /** @see #getCertificateSourceUrl()} */
     public String getKeySourceUrl() {
         return keySourceUrl;
     }
@@ -89,6 +116,18 @@ public class ProxySslConfig implements Serializable {
         this.keySourceUrl = keySourceUrl;
     }
 
+    /**
+     * Sets the {@code ssl_certificate_path} to be used within the generated
+     * {@link LoadBalancer} configuration.
+     * <p>
+     * If set to null, Brooklyn will use an auto generated path.
+     * <p>
+     * If {@link #getCertificateSourceUrl() certificateSourceUrl} is set     *
+     * then Brooklyn will copy the certificate the destination.
+     * <p>
+     * Setting this field is useful if there is a {@code certificate} on the
+     * nginx machine you want to make use of.
+     */
     public String getCertificateDestination() {
         return certificateDestination;
     }
@@ -97,6 +136,18 @@ public class ProxySslConfig implements Serializable {
         this.certificateDestination = certificateDestination;
     }
 
+    /**
+     * Sets the {@code ssl_certificate_key} path to be used within the generated
+     * {@link LoadBalancer} configuration.
+     * <p>
+     * If set to null, Brooklyn will use an auto generated path.
+     * <p>
+     * If {@link #getKeySourceUrl() keySourceUrl} is set then Brooklyn will copy the
+     * certificate to the destination.
+     * <p>
+     * Setting this field is useful if there is a {@code certificate_key} on the
+     * nginx machine you want to make use of.
+     */
     public String getKeyDestination() {
         return keyDestination;
     }
@@ -105,6 +156,9 @@ public class ProxySslConfig implements Serializable {
         this.keyDestination = keyDestination;
     }
 
+    /**
+     * Whether the downstream server (if mapping) also expects https; default false.
+     */
     public boolean getTargetIsSsl() {
         return targetIsSsl;
     }
@@ -113,6 +167,11 @@ public class ProxySslConfig implements Serializable {
         this.targetIsSsl = targetIsSsl;
     }
 
+    /**
+     * Whether to reuse SSL validation in the server (performance).
+     * <p>
+     * Corresponds to nginx setting {@code proxy_ssl_session_reuse on|off}.
+     */
     public boolean getReuseSessions() {
         return reuseSessions;
     }
@@ -120,8 +179,6 @@ public class ProxySslConfig implements Serializable {
     public void setReuseSessions(boolean reuseSessions) {
         this.reuseSessions = reuseSessions;
     }
-    
-    // autogenerated hash code and equals; nothing special required
 
     @Override
     public int hashCode() {

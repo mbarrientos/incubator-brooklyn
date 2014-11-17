@@ -21,18 +21,17 @@ package brooklyn.util.flags;
 import groovy.lang.Closure;
 import groovy.time.TimeDuration;
 
-import java.io.IOException;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.net.InetAddress;
 import java.net.URI;
 import java.net.URL;
-import java.util.ArrayList;
 import java.util.Collection;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -42,7 +41,6 @@ import java.util.concurrent.atomic.AtomicLong;
 import javax.annotation.Nullable;
 import javax.annotation.concurrent.GuardedBy;
 
-import org.codehaus.jackson.map.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -50,6 +48,8 @@ import brooklyn.entity.basic.ClosureEntityFactory;
 import brooklyn.entity.basic.ConfigurableEntityFactory;
 import brooklyn.entity.basic.ConfigurableEntityFactoryFromEntityFactory;
 import brooklyn.entity.basic.EntityFactory;
+import brooklyn.event.AttributeSensor;
+import brooklyn.event.basic.BasicAttributeSensor;
 import brooklyn.util.JavaGroovyEquivalents;
 import brooklyn.util.exceptions.Exceptions;
 import brooklyn.util.guava.Maybe;
@@ -58,21 +58,27 @@ import brooklyn.util.net.Cidr;
 import brooklyn.util.net.Networking;
 import brooklyn.util.net.UserAndHostAndPort;
 import brooklyn.util.text.StringEscapes.JavaStringEscapes;
+import brooklyn.util.text.Strings;
 import brooklyn.util.time.Duration;
+import brooklyn.util.yaml.Yamls;
 
 import com.google.common.base.CaseFormat;
 import com.google.common.base.Function;
+import com.google.common.base.Objects;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Predicate;
-import com.google.common.base.Splitter;
 import com.google.common.collect.HashBasedTable;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
+import com.google.common.collect.Sets;
 import com.google.common.collect.Table;
 import com.google.common.net.HostAndPort;
 import com.google.common.primitives.Primitives;
 import com.google.common.reflect.TypeToken;
 
+@SuppressWarnings("rawtypes")
 public class TypeCoercions {
 
     private static final Logger log = LoggerFactory.getLogger(TypeCoercions.class);
@@ -101,12 +107,52 @@ public class TypeCoercions {
         return coerce(value, TypeToken.of(targetType));
     }
 
+    public static <T> Maybe<T> tryCoerce(Object value, TypeToken<T> targetTypeToken) {
+        try {
+            return Maybe.of( coerce(value, targetTypeToken) );
+        } catch (Throwable t) {
+            Exceptions.propagateIfFatal(t);
+            return Maybe.absent(t); 
+        }
+    }
+    
     /** @see #coerce(Object, Class) */
-    @SuppressWarnings({ "unchecked", "rawtypes" })
+    @SuppressWarnings({ "unchecked" })
     public static <T> T coerce(Object value, TypeToken<T> targetTypeToken) {
         if (value==null) return null;
-        // does not actually cast generified contents; that is left to the caller
         Class<? super T> targetType = targetTypeToken.getRawType();
+
+        //recursive coercion of parameterized collections and map entries
+        if (targetTypeToken.getType() instanceof ParameterizedType) {
+            if (value instanceof Collection && Collection.class.isAssignableFrom(targetType)) {
+                Type[] arguments = ((ParameterizedType) targetTypeToken.getType()).getActualTypeArguments();
+                if (arguments.length != 1) {
+                    throw new IllegalStateException("Unexpected number of parameters in collection type: " + arguments);
+                }
+                Collection coerced = Lists.newLinkedList();
+                TypeToken<?> listEntryType = TypeToken.of(arguments[0]);
+                for (Object entry : (Iterable<?>) value) {
+                    coerced.add(coerce(entry, listEntryType));
+                }
+                if (Set.class.isAssignableFrom(targetType)) {
+                    return (T) Sets.newLinkedHashSet(coerced);
+                } else {
+                    return (T) Lists.newArrayList(coerced);
+                }
+            } else if (value instanceof Map && Map.class.isAssignableFrom(targetType)) {
+                Type[] arguments = ((ParameterizedType) targetTypeToken.getType()).getActualTypeArguments();
+                if (arguments.length != 2) {
+                    throw new IllegalStateException("Unexpected number of parameters in map type: " + arguments);
+                }
+                Map coerced = Maps.newLinkedHashMap();
+                TypeToken<?> mapKeyType = TypeToken.of(arguments[0]);
+                TypeToken<?> mapValueType = TypeToken.of(arguments[1]);
+                for (Map.Entry entry : ((Map<?,?>) value).entrySet()) {
+                    coerced.put(coerce(entry.getKey(), mapKeyType),  coerce(entry.getValue(), mapValueType));
+                }
+                return (T) Maps.newLinkedHashMap(coerced);
+            }
+        }
 
         if (targetType.isInstance(value)) return (T) value;
 
@@ -190,7 +236,18 @@ public class TypeCoercions {
             Map<Class, Function> adapters = registry.row(targetType);
             for (Map.Entry<Class, Function> entry : adapters.entrySet()) {
                 if (entry.getKey().isInstance(value)) {
-                    return (T) entry.getValue().apply(value);
+                    T result = (T) entry.getValue().apply(value);
+                    
+                    // Check if need to unwrap again (e.g. if want List<Integer> and are given a String "1,2,3"
+                    // then we'll have so far converted to List.of("1", "2", "3"). Call recursively.
+                    // First check that value has changed, to avoid stack overflow!
+                    if (!Objects.equal(value, result) && targetTypeToken.getType() instanceof ParameterizedType) {
+                        // Could duplicate check for `result instanceof Collection` etc; but recursive call
+                        // will be fine as if that doesn't match we'll safely reach `targetType.isInstance(value)`
+                        // and just return the result.
+                        return coerce(result, targetTypeToken);
+                    }
+                    return result;
                 }
             }
         }
@@ -326,7 +383,6 @@ public class TypeCoercions {
     @SuppressWarnings("unchecked")
     public static <T> T stringToPrimitive(String value, Class<T> targetType) {
         assert Primitives.allPrimitiveTypes().contains(targetType) || Primitives.allWrapperTypes().contains(targetType) : "targetType="+targetType;
-
         // If char, then need to do explicit conversion
         if (targetType == Character.class || targetType == char.class) {
             if (value.length() == 1) {
@@ -335,7 +391,7 @@ public class TypeCoercions {
                 throw new ClassCoercionException("Cannot coerce type String to "+targetType.getCanonicalName()+" ("+value+"): adapting failed");
             }
         }
-        
+        value = value.trim();
         // For boolean we could use valueOf, but that returns false whereas we'd rather throw errors on bad values
         if (targetType == Boolean.class || targetType == boolean.class) {
             if ("true".equalsIgnoreCase(value)) return (T) Boolean.TRUE;
@@ -415,7 +471,7 @@ public class TypeCoercions {
         return null;
     }
 
-    public synchronized static <A,B> void registerAdapter(Class<A> sourceType, Class<B> targetType, Function<A,B> fn) {
+    public synchronized static <A,B> void registerAdapter(Class<A> sourceType, Class<B> targetType, Function<? super A,B> fn) {
         registry.put(targetType, sourceType, fn);
     }
 
@@ -433,15 +489,17 @@ public class TypeCoercions {
             }
         });
         registerAdapter(Collection.class, Set.class, new Function<Collection,Set>() {
+            @SuppressWarnings("unchecked")
             @Override
             public Set apply(Collection input) {
-                return new LinkedHashSet(input);
+                return Sets.newLinkedHashSet(input);
             }
         });
         registerAdapter(Collection.class, List.class, new Function<Collection,List>() {
+            @SuppressWarnings("unchecked")
             @Override
             public List apply(Collection input) {
-                return new ArrayList(input);
+                return Lists.newArrayList(input);
             }
         });
         registerAdapter(String.class, InetAddress.class, new Function<String,InetAddress>() {
@@ -485,12 +543,14 @@ public class TypeCoercions {
             }
         });
         registerAdapter(Closure.class, ConfigurableEntityFactory.class, new Function<Closure,ConfigurableEntityFactory>() {
+            @SuppressWarnings("unchecked")
             @Override
             public ConfigurableEntityFactory apply(Closure input) {
                 return new ClosureEntityFactory(input);
             }
         });
         registerAdapter(EntityFactory.class, ConfigurableEntityFactory.class, new Function<EntityFactory,ConfigurableEntityFactory>() {
+            @SuppressWarnings("unchecked")
             @Override
             public ConfigurableEntityFactory apply(EntityFactory input) {
                 if (input instanceof ConfigurableEntityFactory) return (ConfigurableEntityFactory)input;
@@ -498,6 +558,7 @@ public class TypeCoercions {
             }
         });
         registerAdapter(Closure.class, EntityFactory.class, new Function<Closure,EntityFactory>() {
+            @SuppressWarnings("unchecked")
             @Override
             public EntityFactory apply(Closure input) {
                 return new ClosureEntityFactory(input);
@@ -530,6 +591,7 @@ public class TypeCoercions {
             }
         });
         registerAdapter(Object.class, TimeDuration.class, new Function<Object,TimeDuration>() {
+            @SuppressWarnings("deprecation")
             @Override
             public TimeDuration apply(final Object input) {
                 log.warn("deprecated automatic coercion of Object to TimeDuration (set breakpoint in TypeCoercions to inspect, convert to Duration)");
@@ -612,6 +674,22 @@ public class TypeCoercions {
                 return BigInteger.valueOf(input);
             }
         });
+        registerAdapter(String.class, Class.class, new Function<String,Class>() {
+            @Override
+            public Class apply(final String input) {
+                try {
+                    return Class.forName(input);
+                } catch (ClassNotFoundException e) {
+                    throw Exceptions.propagate(e);
+                }
+            }
+        });
+        registerAdapter(String.class, AttributeSensor.class, new Function<String,AttributeSensor>() {
+            @Override
+            public AttributeSensor apply(final String input) {
+                return new BasicAttributeSensor<Object>(Object.class, input);
+            }
+        });
         registerAdapter(String.class, List.class, new Function<String,List>() {
             @Override
             public List<String> apply(final String input) {
@@ -621,20 +699,40 @@ public class TypeCoercions {
         registerAdapter(String.class, Map.class, new Function<String,Map>() {
             @Override
             public Map apply(final String input) {
-                // Auto-detect JSON. This allows complex data structures to be received over the REST API.
-                try {
-                    if (!input.isEmpty() && input.charAt(0) == '{') {
-                        return new ObjectMapper().readValue(input, Map.class);
+                Exception error = null;
+                
+                // first try wrapping in braces if needed
+                if (!input.trim().startsWith("{")) {
+                    try {
+                        return apply("{ "+input+" }");
+                    } catch (Exception e) {
+                        Exceptions.propagateIfFatal(e);
+                        // prefer this error
+                        error = e;
+                        // fall back to parsing without braces, e.g. if it's multiline
                     }
-                } catch (IOException e) {
-                    // just fall through to the map parsing
                 }
-                
-                // TODO would be nice to accept YAML for complex data structures too, but it's not as simple as JSON to auto-detect.
-                
-                // Simple map parsing - supports "key1=value1,key2=value2" style input
-                // TODO we should respect quoted strings etc
-                return ImmutableMap.copyOf(Splitter.on(",").trimResults().omitEmptyStrings().withKeyValueSeparator("=").split(input));
+
+                try {
+                    return Yamls.getAs( Yamls.parseAll(input), Map.class );
+                } catch (Exception e) {
+                    Exceptions.propagateIfFatal(e);
+                    if (error!=null && input.indexOf('\n')==-1) {
+                        // prefer the original error if it wasn't braced and wasn't multiline
+                        e = error;
+                    }
+                    throw new IllegalArgumentException("Cannot parse string as map with flexible YAML parsing; "+
+                        (e instanceof ClassCastException ? "yaml treats it as a string" : 
+                        (e instanceof IllegalArgumentException && Strings.isNonEmpty(e.getMessage())) ? e.getMessage() :
+                        ""+e) );
+                }
+
+                // NB: previously we supported this also, when we did json above;
+                // yaml support is better as it supports quotes (and better than json because it allows dropping quotes)
+                // snake-yaml, our parser, also accepts key=value -- although i'm not sure this is strictly yaml compliant;
+                // our tests will catch it if snake behaviour changes, and we can reinstate this
+                // (but note it doesn't do quotes; see http://code.google.com/p/guava-libraries/issues/detail?id=412 for that):
+//                return ImmutableMap.copyOf(Splitter.on(",").trimResults().omitEmptyStrings().withKeyValueSeparator("=").split(input));
             }
         });
     }

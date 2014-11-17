@@ -35,6 +35,7 @@ import brooklyn.event.SensorEvent;
 import brooklyn.event.SensorEventListener;
 import brooklyn.management.SubscriptionHandle;
 
+import com.google.common.annotations.Beta;
 import com.google.common.base.Objects;
 import com.google.common.base.Predicate;
 import com.google.common.base.Predicates;
@@ -46,9 +47,9 @@ public class EntityTestUtils {
     // TODO would be nice to have this... perhaps moving this class, or perhaps this whole project, to core/src/test ?
 //    public static LocalManagementContext newManagementContext() { return new LocalManagementContextForTests(); }
     
-	// TODO Delete methods from TestUtils, to just have them here (or switch so TestUtils delegates here,
-	// and deprecate methods in TestUtils until deleted).
-	
+    // TODO Delete methods from TestUtils, to just have them here (or switch so TestUtils delegates here,
+    // and deprecate methods in TestUtils until deleted).
+    
     public static <T> void assertAttributeEquals(Entity entity, AttributeSensor<T> attribute, T expected) {
         assertEquals(entity.getAttribute(attribute), expected);
     }
@@ -92,6 +93,12 @@ public class EntityTestUtils {
         return result.get();
     }
 
+    public static <T> T assertAttribute(final Entity entity, final AttributeSensor<T> attribute, final Predicate<? super T> predicate) {
+        T val = entity.getAttribute(attribute);
+        assertTrue(predicate.apply(val), "val="+val);
+        return val;
+    }
+
     public static <T extends Entity> void assertPredicateEventuallyTrue(final T entity, final Predicate<? super T> predicate) {
         assertPredicateEventuallyTrue(Maps.newLinkedHashMap(), entity, predicate);
     }
@@ -125,7 +132,8 @@ public class EntityTestUtils {
                 assertEquals(members.size(), expected, "members="+members);
             }});
     }
-    
+
+    /** checks that the entity's value for this attribute changes, by registering a subscription and checking the value */
     public static void assertAttributeChangesEventually(final Entity entity, final AttributeSensor<?> attribute) {
         final Object origValue = entity.getAttribute(attribute);
         final AtomicBoolean changed = new AtomicBoolean();
@@ -144,4 +152,13 @@ public class EntityTestUtils {
             ((EntityLocal)entity).unsubscribe(entity, handle);
         }
     }
+    
+    /** alternate version of {@link #assertAttributeChangesEventually(Entity, AttributeSensor)} not using subscriptions and 
+     * with simpler code, for comparison */
+    @Beta
+    public static <T> void assertAttributeChangesEventually2(final Entity entity, final AttributeSensor<T> attribute) {
+        assertAttributeEventually(entity, attribute, 
+            Predicates.not(Predicates.equalTo(entity.getAttribute(attribute))));
+    }
+    
 }

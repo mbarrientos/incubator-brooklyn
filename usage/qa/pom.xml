@@ -27,7 +27,7 @@
     </description>
 
     <parent>
-        <groupId>io.brooklyn</groupId>
+        <groupId>org.apache.brooklyn</groupId>
         <artifactId>brooklyn-parent</artifactId>
         <version>0.7.0-SNAPSHOT</version>  <!-- BROOKLYN_VERSION -->
         <relativePath>../../pom.xml</relativePath>
@@ -35,7 +35,7 @@
 
     <dependencies>
         <dependency>
-            <groupId>io.brooklyn</groupId>
+            <groupId>org.apache.brooklyn</groupId>
             <artifactId>brooklyn-all</artifactId>
             <version>${project.version}</version>
         </dependency>
@@ -43,17 +43,40 @@
         <dependency>
             <groupId>net.sf.jopt-simple</groupId>
             <artifactId>jopt-simple</artifactId>
-            <version>${jopt.version}</version>
         </dependency>
         <dependency>
             <groupId>org.apache.httpcomponents</groupId>
             <artifactId>httpclient</artifactId>
-            <version>${httpclient.version}</version>
         </dependency>
-        
         <dependency>
-            <groupId>io.brooklyn</groupId>
+            <groupId>com.google.guava</groupId>
+            <artifactId>guava</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.codehaus.groovy</groupId>
+            <artifactId>groovy-all</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.testng</groupId>
+            <artifactId>testng</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.brooklyn</groupId>
             <artifactId>brooklyn-test-support</artifactId>
+            <version>${project.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.brooklyn</groupId>
+            <artifactId>brooklyn-core</artifactId>
+            <version>${project.version}</version>
+            <classifier>tests</classifier>
             <scope>test</scope>
         </dependency>
     </dependencies>

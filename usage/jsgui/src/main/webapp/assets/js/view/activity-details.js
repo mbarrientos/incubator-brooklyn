@@ -20,12 +20,12 @@
  * Displays details on an activity/task
  */
 define([
-    "underscore", "jquery", "backbone", "brooklyn-utils", "view/viewutils", "formatJson", "moment",
+    "underscore", "jquery", "backbone", "brooklyn-utils", "view/viewutils", "moment",
     "model/task-summary",
     "text!tpl/apps/activity-details.html", "text!tpl/apps/activity-table.html", 
 
     "bootstrap", "jquery-datatables", "datatables-extensions"
-], function (_, $, Backbone, Util, ViewUtils, FormatJSON, moment,
+], function (_, $, Backbone, Util, ViewUtils, moment,
     TaskSummary,
     ActivityDetailsHtml, ActivityTableHtml) {
 
@@ -146,16 +146,21 @@ define([
                         that.displayTextForLinkedTask(v)+"</a>" })
             this.updateFieldWith('result',
                 function(v) {
-                    if (v.toString().length<20 &&  !/\r|\n/.exec(v)) {
-                        return " with result: <span class='result-literal'>"+_.escape(v)+"</span>";
+                    // use display string (JSON.stringify(_.escape(v)) because otherwise list of [null,null] is just ","  
+                    var vs = Util.toDisplayString(v);
+                    if (vs.trim().length==0) {
+                        return " (empty result)";
+                    } else if (vs.length<20 &&  !/\r|\n/.exec(v)) {
+                        return " with result: <span class='result-literal'>"+vs+"</span>";
                     } else {
-                        return "<div class='result-literal'>"+_.escape(v).replace(/\n+/g,"<br>")+"</div>"
+                        return "<div class='result-literal'>"+vs.replace(/\n+/g,"<br>")+"</div>"
                     }
                  })
             this.updateFieldWith('tags', function(tags) {
                 var tagBody = "";
-                for (var tag in tags)
-                    tagBody += "<div class='activity-tag-giftlabel'>"+_.escape(tags[tag])+"</div>";
+                for (var tag in tags) {
+                    tagBody += "<div class='activity-tag-giftlabel'>"+Util.toDisplayString(tags[tag])+"</div>";
+                }
                 return tagBody;
             })
             
@@ -167,7 +172,7 @@ define([
                 function(v) { return v <= 0 ? "-" : moment(v).format('D MMM YYYY H:mm:ss.SSS')+" &nbsp; <i>"+moment(v).from(startTimeUtc, true)+" later</i>" })
 
             ViewUtils.updateTextareaWithData(this.$(".task-json .for-textarea"), 
-                FormatJSON(this.task.toJSON()), false, false, 150, 400)
+                Util.toTextAreaString(this.task), false, false, 150, 400)
 
             ViewUtils.updateTextareaWithData(this.$(".task-detail .for-textarea"), 
                 this.task.get('detailedStatus'), false, false, 30, 250)
@@ -276,7 +281,7 @@ define([
             }
             ViewUtils.updateMyDataTable(this.subtasksTable, subtasks, function(task, index) {
                 return [ task.get("id"),
-                         (task.get("entityId") && task.get("entityId")!=that.task.get("entityId") ? task.get("entityDisplayName") + ": " : "") + 
+                         (task.get("entityId") && (!that.task || task.get("entityId")!=that.task.get("entityId")) ? task.get("entityDisplayName") + ": " : "") + 
                          task.get("displayName"),
                          task.get("submitTimeUtc") <= 0 ? "-" : moment(task.get("submitTimeUtc")).calendar(),
                          task.get("currentStatus")

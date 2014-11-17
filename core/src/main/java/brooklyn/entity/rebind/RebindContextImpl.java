@@ -20,9 +20,13 @@ package brooklyn.entity.rebind;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 
+import java.util.Collection;
 import java.util.Map;
 
+import brooklyn.basic.BrooklynObject;
+import brooklyn.catalog.CatalogItem;
 import brooklyn.entity.Entity;
+import brooklyn.entity.Feed;
 import brooklyn.location.Location;
 import brooklyn.policy.Enricher;
 import brooklyn.policy.Policy;
@@ -35,8 +39,13 @@ public class RebindContextImpl implements RebindContext {
     private final Map<String, Location> locations = Maps.newLinkedHashMap();
     private final Map<String, Policy> policies = Maps.newLinkedHashMap();
     private final Map<String, Enricher> enrichers = Maps.newLinkedHashMap();
+    private final Map<String, Feed> feeds = Maps.newLinkedHashMap();
+    private final Map<String, CatalogItem<?, ?>> catalogItems = Maps.newLinkedHashMap();
+    
     private final ClassLoader classLoader;
     private final RebindExceptionHandler exceptionHandler;
+    
+    private boolean allAreReadOnly = false;
     
     public RebindContextImpl(RebindExceptionHandler exceptionHandler, ClassLoader classLoader) {
         this.exceptionHandler = checkNotNull(exceptionHandler, "exceptionHandler");
@@ -59,12 +68,28 @@ public class RebindContextImpl implements RebindContext {
         enrichers.put(id, enricher);
     }
     
+    public void registerFeed(String id, Feed feed) {
+        feeds.put(id, feed);
+    }
+    
+    public void registerCatalogItem(String id, CatalogItem<?, ?> catalogItem) {
+        catalogItems.put(id, catalogItem);
+    }
+    
     public void unregisterPolicy(Policy policy) {
         policies.remove(policy.getId());
     }
 
     public void unregisterEnricher(Enricher enricher) {
         enrichers.remove(enricher.getId());
+    }
+
+    public void unregisterFeed(Feed feed) {
+        feeds.remove(feed.getId());
+    }
+
+    public void unregisterCatalogItem(CatalogItem<?,?> item) {
+        catalogItems.remove(item.getId());
     }
 
     @Override
@@ -86,6 +111,16 @@ public class RebindContextImpl implements RebindContext {
     public Enricher getEnricher(String id) {
         return enrichers.get(id);
     }
+
+    @Override
+    public CatalogItem<?, ?> getCatalogItem(String id) {
+        return catalogItems.get(id);
+    }
+
+    @Override
+    public Feed getFeed(String id) {
+        return feeds.get(id);
+    }
     
     @Override
     public Class<?> loadClass(String className) throws ClassNotFoundException {
@@ -96,4 +131,37 @@ public class RebindContextImpl implements RebindContext {
     public RebindExceptionHandler getExceptionHandler() {
         return exceptionHandler;
     }
+
+    protected Collection<Location> getLocations() {
+        return locations.values();
+    }
+    
+    protected Collection<Entity> getEntities() {
+        return entities.values();
+    }
+    
+    protected Collection<Policy> getPolicies() {
+        return policies.values();
+    }
+
+    protected Collection<Enricher> getEnrichers() {
+        return enrichers.values();
+    }
+    
+    protected Collection<Feed> getFeeds() {
+        return feeds.values();
+    }
+
+    protected Collection<CatalogItem<?, ?>> getCatalogItems() {
+        return catalogItems.values();
+    }
+
+    public void setAllReadOnly() {
+        allAreReadOnly = true;
+    }
+    
+    public boolean isReadOnly(BrooklynObject item) {
+        return allAreReadOnly;
+    }
+    
 }

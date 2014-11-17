@@ -25,12 +25,10 @@ import java.util.Set;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
-import com.google.common.collect.ImmutableMap;
-
+import brooklyn.basic.BrooklynObject;
 import brooklyn.config.ConfigKey;
 import brooklyn.config.ConfigKey.HasConfigKey;
 import brooklyn.entity.proxying.EntitySpec;
-import brooklyn.entity.trait.Identifiable;
 import brooklyn.event.AttributeSensor;
 import brooklyn.location.Location;
 import brooklyn.management.Task;
@@ -53,7 +51,7 @@ import brooklyn.util.guava.Maybe;
  * 
  * @see brooklyn.entity.basic.AbstractEntity
  */
-public interface Entity extends Identifiable {
+public interface Entity extends BrooklynObject {
     /**
      * The unique identifier for this entity.
      */
@@ -71,7 +69,7 @@ public interface Entity extends Identifiable {
     String getDisplayName();
     
     /** 
-     * A URL pointing to an image which can be used to represent this icon.
+     * A URL pointing to an image which can be used to represent this entity.
      */
     @Nullable String getIconUrl();
     
@@ -124,12 +122,20 @@ public interface Entity extends Identifiable {
     /** 
      * Add a child {@link Entity}, and set this entity as its parent,
      * returning the added child.
+     * <p>
+     * As with {@link #addChild(EntitySpec)} the child is <b>not</b> brought under management
+     * as part of this call.  It should not be managed prior to this call either.
      */
     <T extends Entity> T addChild(T child);
     
     /** 
      * Creates an {@link Entity} from the given spec and adds it, setting this entity as the parent,
-     * returning the added child. */
+     * returning the added child.
+     * <p>
+     * The added child is <b>not</b> managed as part of this call, even if the parent is managed,
+     * so if adding post-management an explicit call to manage the child will be needed;
+     * see the convenience method <code>Entities.manage(...)</code>. 
+     * */
     <T extends Entity> T addChild(EntitySpec<T> spec);
     
     /** 
@@ -245,17 +251,33 @@ public interface Entity extends Identifiable {
      */
     boolean removeEnricher(Enricher enricher);
     
+    /**
+     * Adds the given feed to this entity. Also calls feed.setEntity if available.
+     */
+    <T extends Feed> T addFeed(T feed);
+    
     /** 
-     * Tags are arbitrary objects which can be attached to an entity for subsequent reference.
-     * They must not be null (as {@link ImmutableMap} may be used under the covers; also there is little point!);
-     * and they should be amenable to our persistence (on-disk serialization) and our JSON serialization in the REST API.
-     * 
-     * @return An immutable copy of the set of tags on this entity. 
-     * Note {@link #containsTag(Object)} will be more efficient,
-     * and {@link #addTag(Object)} and {@link #removeTag(Object)} will not work. */
+     * @since 0.7
+     * @deprecated since 0.7; see {@link #tags()}
+     */
+    @Deprecated
     Set<Object> getTags();
+    /** 
+     * @since 0.7
+     * @deprecated since 0.7; see {@link #tags()}
+     */
+    @Deprecated
     boolean addTag(@Nonnull Object tag);
+    /** 
+     * @since 0.7
+     * @deprecated since 0.7; see {@link #tags()}
+     */
+    @Deprecated
     boolean removeTag(@Nonnull Object tag);
+    /** 
+     * @since 0.7
+     * @deprecated since 0.7; see {@link #tags()}
+     */
+    @Deprecated
     boolean containsTag(@Nonnull Object tag);
-
 }

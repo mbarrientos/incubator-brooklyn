@@ -64,9 +64,9 @@ public class DslAndRebindYamlTest extends AbstractYamlTest {
     
     @AfterMethod(alwaysRun = true)
     @Override
-    public void teardown() {
+    public void tearDown() {
         for (ManagementContext mgmt: mgmtContexts) Entities.destroyAll(mgmt);
-        super.teardown();
+        super.tearDown();
         mementoDir = null;
         mgmtContexts.clear();
     }
@@ -87,7 +87,7 @@ public class DslAndRebindYamlTest extends AbstractYamlTest {
 
 
     protected Entity setupAndCheckTestEntityInBasicYamlWith(String ...extras) throws Exception {
-        Entity app = createAndStartApplication("test-entity-basic-template.yaml", extras);
+        Entity app = createAndStartApplication(loadYaml("test-entity-basic-template.yaml", extras));
         waitForApplicationTasks(app);
 
         Assert.assertEquals(app.getDisplayName(), "test-entity-basic-template");

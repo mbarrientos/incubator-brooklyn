@@ -27,9 +27,9 @@ import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
 
-import brooklyn.entity.basic.ApplicationBuilder;
 import brooklyn.entity.basic.Entities;
 import brooklyn.management.ManagementContext;
+import brooklyn.test.entity.LocalManagementContextForTests;
 import brooklyn.test.entity.TestApplication;
 import brooklyn.util.collections.MutableMap;
 import brooklyn.util.crypto.SecureKeys;
@@ -45,8 +45,10 @@ public class SshMachineLocationIntegrationTest {
 
     @BeforeMethod(alwaysRun=true)
     public void setup() throws Exception {
-        app = ApplicationBuilder.newManagedApp(TestApplication.class);
-        mgmt = app.getManagementContext();
+        mgmt = LocalManagementContextForTests.builder(true)
+            .useDefaultProperties()
+            .build();
+        app = TestApplication.Factory.newManagedInstanceForTests(mgmt);
     }
 
     @AfterMethod(alwaysRun=true)
@@ -58,7 +60,7 @@ public class SshMachineLocationIntegrationTest {
     // Note: requires `named:localhost-passphrase` set up with a key whose passphrase is "localhost"    
     @Test(groups = "Integration")
     public void testExtractingConnectablePassphraselessKey() throws Exception {
-        LocalhostMachineProvisioningLocation lhp = (LocalhostMachineProvisioningLocation) mgmt.getLocationRegistry().resolveIfPossible("named:localhost-passphrase");
+        LocalhostMachineProvisioningLocation lhp = (LocalhostMachineProvisioningLocation) mgmt.getLocationRegistry().resolve("named:localhost-passphrase", true, null).orNull();
         Preconditions.checkNotNull(lhp, "This test requires a localhost named location called 'localhost-passphrase' (which should have a passphrase set)");
         SshMachineLocation sm = lhp.obtain();
         

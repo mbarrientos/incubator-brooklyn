@@ -18,7 +18,10 @@
  */
 package brooklyn.test.entity;
 
+import java.util.Map;
+
 import brooklyn.entity.Entity;
+import brooklyn.entity.basic.ApplicationBuilder;
 import brooklyn.entity.basic.EntityInternal;
 import brooklyn.entity.basic.StartableApplication;
 import brooklyn.entity.proxying.EntitySpec;
@@ -26,6 +29,8 @@ import brooklyn.entity.proxying.ImplementedBy;
 import brooklyn.event.AttributeSensor;
 import brooklyn.event.basic.Sensors;
 import brooklyn.location.basic.LocalhostMachineProvisioningLocation;
+import brooklyn.location.basic.SimulatedLocation;
+import brooklyn.management.ManagementContext;
 
 /**
  * Mock application for testing.
@@ -38,6 +43,17 @@ public interface TestApplication extends StartableApplication, EntityInternal {
 
     public <T extends Entity> T createAndManageChild(EntitySpec<T> spec);
 
+    public SimulatedLocation newSimulatedLocation();
     public LocalhostMachineProvisioningLocation newLocalhostProvisioningLocation();
-    
+    public LocalhostMachineProvisioningLocation newLocalhostProvisioningLocation(Map<?,?> flags);
+
+    public static class Factory {
+        public static TestApplication newManagedInstanceForTests(ManagementContext mgmt) {
+            return ApplicationBuilder.newManagedApp(TestApplication.class, mgmt);
+        }
+        public static TestApplication newManagedInstanceForTests() {
+            return newManagedInstanceForTests(new LocalManagementContextForTests());
+        }
+    }
+
 }

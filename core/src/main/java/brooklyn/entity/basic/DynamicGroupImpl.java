@@ -26,6 +26,8 @@ import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import brooklyn.config.BrooklynLogging;
+import brooklyn.config.BrooklynLogging.LoggingLevel;
 import brooklyn.entity.Entity;
 import brooklyn.event.Sensor;
 import brooklyn.event.SensorEvent;
@@ -33,6 +35,7 @@ import brooklyn.event.SensorEventListener;
 import brooklyn.management.internal.CollectionChangeListener;
 import brooklyn.management.internal.ManagementContextInternal;
 import brooklyn.util.GroovyJavaMethods;
+import brooklyn.util.exceptions.Exceptions;
 
 import com.google.common.base.Predicate;
 import com.google.common.base.Predicates;
@@ -50,7 +53,7 @@ public class DynamicGroupImpl extends AbstractGroupImpl implements DynamicGroup 
     public DynamicGroupImpl() { }
 
     @Deprecated
-    public DynamicGroupImpl(Map flags, Entity parent) {
+    public DynamicGroupImpl(@SuppressWarnings("rawtypes") Map flags, Entity parent) {
         super(flags, parent);
     }
 
@@ -59,7 +62,7 @@ public class DynamicGroupImpl extends AbstractGroupImpl implements DynamicGroup 
         super.init();
         setAttribute(RUNNING, true);
     }
-
+    
     @Override
     public void setEntityFilter(Predicate<? super Entity> filter) {
         // TODO Sould this be "evenIfOwned"?
@@ -160,7 +163,13 @@ public class DynamicGroupImpl extends AbstractGroupImpl implements DynamicGroup 
         }
         setChangeListener = new MyEntitySetChangeListener();
         ((ManagementContextInternal) getManagementContext()).addEntitySetListener(setChangeListener);
-        rescanEntities();
+        try {
+            rescanEntities();
+        } catch (Exception e) {
+            log.warn("Error rescanning entities when rebinding; may be a group set against an unknown entity: "+e);
+            log.debug("Trace for rescan entities error", e);
+            Exceptions.propagateIfFatal(e);
+        }
     }
 
     @Override
@@ -181,11 +190,12 @@ public class DynamicGroupImpl extends AbstractGroupImpl implements DynamicGroup 
                 return;
             }
             if (getConfig(ENTITY_FILTER) == null) {
-                log.warn("{} not (yet) scanning for children: no filter defined", this, this);
+                log.debug("{} not (yet) scanning for children: no filter defined", this, this);
                 return;
             }
             if (getApplication() == null) {
-                log.warn("{} not (yet) scanning for children: no application defined", this);
+                BrooklynLogging.log(log, BrooklynLogging.levelDependingIfReadOnly(this, LoggingLevel.WARN, LoggingLevel.TRACE, LoggingLevel.TRACE),
+                    "{} not (yet) scanning for children: no application defined", this);
                 return;
             }
             boolean changed = false;

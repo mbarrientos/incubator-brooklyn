@@ -18,6 +18,7 @@
  */
 package brooklyn.catalog.internal;
 
+import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -56,25 +57,29 @@ public class CatalogLibrariesDto implements CatalogItem.CatalogItemLibraries {
 
     /**
      * Parses an instance of CatalogLibrariesDto from the given List. Expects the list entries
-     * to be maps of string -> string. Will skip items that are not.
+     * to be either Strings or Maps of String -> String. Will skip items that are not.
      */
-    public static CatalogLibrariesDto fromList(List<?> possibleLibraries) {
+    public static CatalogLibrariesDto from(Collection<?> possibleLibraries) {
         CatalogLibrariesDto dto = new CatalogLibrariesDto();
         for (Object object : possibleLibraries) {
             if (object instanceof Map) {
+                @SuppressWarnings("rawtypes")
                 Map entry = (Map) object;
-                String name = stringValOrNull(entry, "name");
-                String version = stringValOrNull(entry, "version");
+                // these might be useful in the future
+//                String name = stringValOrNull(entry, "name");
+//                String version = stringValOrNull(entry, "version");
                 String url = stringValOrNull(entry, "url");
                 dto.addBundle(url);
+            } else if (object instanceof String) {
+                dto.addBundle((String) object);
             } else {
-                LOG.debug("Unexpected entry in libraries list not instance of map: " + object);
+                LOG.debug("Unexpected entry in libraries list neither string nor map: " + object);
             }
         }
-
         return dto;
     }
 
+    @SuppressWarnings("rawtypes")
     private static String stringValOrNull(Map map, String key) {
         Object val = map.get(key);
         return val != null ? String.valueOf(val) : null;

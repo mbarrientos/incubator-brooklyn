@@ -25,7 +25,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import brooklyn.entity.basic.EmptySoftwareProcessDriver;
-import brooklyn.entity.basic.SoftwareProcessImpl;
+import brooklyn.entity.basic.EmptySoftwareProcessImpl;
 import brooklyn.entity.software.SshEffectorTasks;
 import brooklyn.event.feed.ssh.SshFeed;
 import brooklyn.event.feed.ssh.SshPollConfig;
@@ -42,7 +42,7 @@ import com.google.common.base.Function;
 import com.google.common.base.Functions;
 import com.google.common.base.Splitter;
 
-public class MachineEntityImpl extends SoftwareProcessImpl implements MachineEntity {
+public class MachineEntityImpl extends EmptySoftwareProcessImpl implements MachineEntity {
 
     private static final Logger LOG = LoggerFactory.getLogger(MachineEntityImpl.class);
 
@@ -55,32 +55,40 @@ public class MachineEntityImpl extends SoftwareProcessImpl implements MachineEnt
     @Override
     public void init() {
         LOG.info("Starting server pool machine with id {}", getId());
+        super.init();
     }
 
     @Override
     protected void connectSensors() {
         super.connectSensors();
-        connectServiceUpIsRunning();
 
         // Sensors linux-specific
         if (!getMachine().getMachineDetails().getOsDetails().isLinux()) return;
-
         sensorFeed = SshFeed.builder()
                 .entity(this)
                 .period(Duration.THIRTY_SECONDS)
+                .poll(new SshPollConfig<Duration>(UPTIME)
+                        .command("cat /proc/uptime")
+                        .onFailureOrException(Functions.<Duration>constant(null))
+                        .onSuccess(new Function<SshPollValue, Duration>() {
+                            @Override
+                            public Duration apply(SshPollValue input) {
+                                return Duration.seconds( Double.valueOf( Strings.getFirstWord(input.getStdout()) ) );
+                            }
+                        }))
                 .poll(new SshPollConfig<Double>(LOAD_AVERAGE)
-                        .command("uptime")
+                        .command("cat /proc/loadavg | awk '{print $1}'")
                         .onFailureOrException(Functions.constant(-1d))
                         .onSuccess(new Function<SshPollValue, Double>() {
                             @Override
                             public Double apply(SshPollValue input) {
-                                String loadAverage = Strings.getFirstWordAfter(input.getStdout(), "load average:").replace(",", "");
-                                return Double.valueOf(loadAverage);
+                                String loadAverage = input.getStdout();
+                                return Double.valueOf(loadAverage) /  getMachine().getMachineDetails().getHardwareDetails().getCpuCount();
                             }
                         }))
                 .poll(new SshPollConfig<Double>(CPU_USAGE)
                         .command("cat /proc/stat")
-                        .onFailureOrException(Functions.constant(0d))
+                        .onFailureOrException(Functions.constant(-1d))
                         .onSuccess(new Function<SshPollValue, Double>() {
                             @Override
                             public Double apply(SshPollValue input) {
@@ -127,7 +135,6 @@ public class MachineEntityImpl extends SoftwareProcessImpl implements MachineEnt
 
     @Override
     public void disconnectSensors() {
-        disconnectServiceUpIsRunning();
         if (sensorFeed != null) sensorFeed.stop();
         super.disconnectSensors();
     }

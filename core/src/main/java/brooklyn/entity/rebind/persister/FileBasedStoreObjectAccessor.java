@@ -23,6 +23,7 @@ import java.io.IOException;
 import java.util.Date;
 
 import brooklyn.util.exceptions.Exceptions;
+import brooklyn.util.io.FileUtil;
 import brooklyn.util.text.Strings;
 
 import com.google.common.base.Charsets;
@@ -38,10 +39,6 @@ import com.google.common.io.Files;
  */
 public class FileBasedStoreObjectAccessor implements PersistenceObjectStore.StoreObjectAccessor {
 
-    /**
-     * @param file
-     * @param executor A sequential executor (e.g. SingleThreadedExecutor, or equivalent)
-     */
     public FileBasedStoreObjectAccessor(File file, String tmpExtension) {
         this.file = file;
         this.tmpFile = new File(file.getParentFile(), file.getName()+(Strings.isBlank(tmpExtension) ? ".tmp" : tmpExtension));
@@ -65,10 +62,13 @@ public class FileBasedStoreObjectAccessor implements PersistenceObjectStore.Stor
         return file.exists();
     }
 
+    // Setting permissions to 600 reduces objectAccessor.put performance from about 5000 per second to 3000 per second
+    // in java 6. With Java 7's Files.setPosixFilePermissions, this might well improve.
     @Override
     public void put(String val) {
         try {
             if (val==null) val = "";
+            FileUtil.setFilePermissionsTo600(tmpFile);
             Files.write(val, tmpFile, Charsets.UTF_8);
             FileBasedObjectStore.moveFile(tmpFile, file);
             
@@ -83,6 +83,7 @@ public class FileBasedStoreObjectAccessor implements PersistenceObjectStore.Stor
     public void append(String val) {
         try {
             if (val==null) val = "";
+            FileUtil.setFilePermissionsTo600(file);
             Files.append(val, file, Charsets.UTF_8);
             
         } catch (IOException e) {
@@ -107,5 +108,4 @@ public class FileBasedStoreObjectAccessor implements PersistenceObjectStore.Stor
     public String toString() {
         return Objects.toStringHelper(this).add("file", file).toString();
     }
-
 }
