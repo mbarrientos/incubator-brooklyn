@@ -37,7 +37,7 @@ import java.util.Map;
 
 public class ApacheSshDriver extends PhpWebAppSshDriver implements ApacheDriver {
 
-   private static final Logger LOG = LoggerFactory.getLogger(ApacheSshDriver.class);
+    private static final Logger LOG = LoggerFactory.getLogger(ApacheSshDriver.class);
 
     public ApacheSshDriver(ApacheServerImpl entity, SshMachineLocation machine) {
         super(entity, machine);
@@ -117,7 +117,8 @@ public class ApacheSshDriver extends PhpWebAppSshDriver implements ApacheDriver 
                 enableAvailableDeploymentRunDir(),
                 enableServerStatusServerModule(),
                 configureHttpPort(),
-                realoadApacheService()
+                realoadApacheService(),
+                installPhp()
         ).execute();
         LOG.info("deployInit initial applications from {}", new Object[]{this});
         getEntity().deployInitialApplications();
@@ -140,9 +141,12 @@ public class ApacheSshDriver extends PhpWebAppSshDriver implements ApacheDriver 
                         "FILENAME=$(basename $file)\n" +
                         "exec a2dissite $FILENAME | true\n" +
                         "done\n" +
+                        "\n" +
+                        "rm %s/sites-enabled/*" +
                         "\n",
                 getEntity().getConfigurationDir(),
-                getEntity().getAvailableSitesConfigurationFolder());
+                getEntity().getAvailableSitesConfigurationFolder(),
+                getEntity().getConfigurationDir());
         return result;
     }
 
@@ -151,39 +155,39 @@ public class ApacheSshDriver extends PhpWebAppSshDriver implements ApacheDriver 
                 "invoke-rc.d apache2 reload\n";
     }
 
-   private String removeAvailableSitesConfigurationFolder(){
-       String result=String.format(
-               "rm -rf %s%s/*\n",
-               getEntity().getConfigurationDir(),
-               getEntity().getAvailableSitesConfigurationFolder());
-       return result;
-   }
+    private String removeAvailableSitesConfigurationFolder(){
+        String result=String.format(
+                "rm -rf %s%s/*\n",
+                getEntity().getConfigurationDir(),
+                getEntity().getAvailableSitesConfigurationFolder());
+        return result;
+    }
 
-   private String  addFolderToAvailablesSitesConfigurationFile(String targetName){
-       String result= String.format(
-               "cat <<EOT >> %s%s/%s\n" +
-               "#"+targetName+"\n"+
-               "<VirtualHost *:%s>\n" +
-               "\tServerAdmin webmaster@localhost\n" +
-               "\tDocumentRoot %s/"+targetName+"\n"+
-               "\tErrorLog ${APACHE_LOG_DIR}/error-"+targetName+".log\n" +
-               "\tCustomLog ${APACHE_LOG_DIR}/access-"+targetName+".log combined\n" +
-               "</VirtualHost>\n" +
-               "EOT",
-               getEntity().getConfigurationDir(),
-               getEntity().getAvailableSitesConfigurationFolder(),
-               getEntity().getAvailablesSitesConfigurationFile(),
-               getEntity().getHttpPort(),
-               getEntity().getDeployRunDir(),
-               changePermissionsOfFolder(getEntity().getDeployRunDir()+"/"+targetName));
-       return result;
-   }
+    private String  addFolderToAvailablesSitesConfigurationFile(String targetName){
+        String result= String.format(
+                "cat <<EOT >> %s%s/%s\n" +
+                        "#"+targetName+"\n"+
+                        "<VirtualHost *:%s>\n" +
+                        "\tServerAdmin webmaster@localhost\n" +
+                        "\tDocumentRoot %s/"+targetName+"\n"+
+                        "\tErrorLog ${APACHE_LOG_DIR}/error-"+targetName+".log\n" +
+                        "\tCustomLog ${APACHE_LOG_DIR}/access-"+targetName+".log combined\n" +
+                        "</VirtualHost>\n" +
+                        "EOT",
+                getEntity().getConfigurationDir(),
+                getEntity().getAvailableSitesConfigurationFolder(),
+                getEntity().getAvailablesSitesConfigurationFile(),
+                getEntity().getHttpPort(),
+                getEntity().getDeployRunDir(),
+                changePermissionsOfFolder(getEntity().getDeployRunDir()+"/"+targetName));
+        return result;
+    }
 
-   private String createDeployRunDirConfigurationFile(){
+    private String createDeployRunDirConfigurationFile(){
         String result= String.format(
                 "%s\n"+
-                "cat > %s%s/%s << \"EOF\"\n" +
-                "#[Brooklyn] Configuration File\n" +
+                        "cat > %s%s/%s << \"EOF\"\n" +
+                        "#[Brooklyn] Configuration File\n" +
                         "#app_id\n" +
                         "#<VirtualHost * :${PORT}>\n" +
                         "\t#ServerAdmin webmaster@localhost\n" +
@@ -205,18 +209,18 @@ public class ApacheSshDriver extends PhpWebAppSshDriver implements ApacheDriver 
                         "<VirtualHost *:%s>\n" +
                         "\tDocumentRoot /var/www/\n" +
                         "</VirtualHost>\n\n" +
-                "EOF",
+                        "EOF",
                 createFolderDeployRunDir(),
                 getEntity().getConfigurationDir(),
                 getEntity().getAvailableSitesConfigurationFolder(),
                 getEntity().getAvailablesSitesConfigurationFile(),
                 getEntity().getHttpPort());
-       return result;
+        return result;
     }
 
     private String createFolderDeployRunDir(){
-               return "mkdir -p "+getRunDir()+"\n";
-   }
+        return "mkdir -p "+getRunDir()+"\n";
+    }
 
     private String changePermissionsOfFolder(String folder){
         return String.format("chown -R %s:%s %s\n",getEntity().getDefaultGroup(), getEntity().getDefaultGroup(),folder);
@@ -240,15 +244,15 @@ public class ApacheSshDriver extends PhpWebAppSshDriver implements ApacheDriver 
         String result;
         result= String.format(
                 "cat <<EOT >> %s/apache2.conf\n" +
-                "<Location /server-status>\n" +
-                "\tSetHandler server-status\n" +
-                "\tOrder deny,allow\n" +
-                "\tDeny from all\n" +
-                "\tAllow from localhost\n" +
-                "\tAllow from %s\n" +
-                "</Location>\n" +
-                "ExtendedStatus On\n"+
-                "EOT\n",
+                        "<Location /server-status>\n" +
+                        "\tSetHandler server-status\n" +
+                        "\tOrder deny,allow\n" +
+                        "\tDeny from all\n" +
+                        "\tAllow from localhost\n" +
+                        "\tAllow from %s\n" +
+                        "</Location>\n" +
+                        "ExtendedStatus On\n"+
+                        "EOT\n",
                 getEntity().getConfigurationDir(),
                 getBrooklynIPv4());
         return result;
@@ -263,6 +267,15 @@ public class ApacheSshDriver extends PhpWebAppSshDriver implements ApacheDriver 
                 getEntity().getConfigurationDir()
         );
         return result;
+    }
+
+    private String installPhp(){
+
+        String result = String.format(
+                "sudo apt-get -y install php5" +
+                        "\n");
+        return result;
+
     }
 
     //TODO
@@ -326,25 +339,26 @@ public class ApacheSshDriver extends PhpWebAppSshDriver implements ApacheDriver 
 
     private String getBrooklynIPv4() {
 
-            String ip = "127.0.0.1";
-            try {
-                Enumeration<NetworkInterface> n = NetworkInterface.getNetworkInterfaces();
-                for (; n.hasMoreElements(); ) {
-                    NetworkInterface e = n.nextElement();
-                    System.out.println("Interface: " + e.getName());
-                    Enumeration<InetAddress> a = e.getInetAddresses();
-                    for (; a.hasMoreElements(); ) {
-                        InetAddress addr = a.nextElement();
-                        if ((addr instanceof Inet4Address)
-                                && (!addr.getHostAddress().equals("127.0.0.1"))) {
-                            return addr.getHostAddress();
-                        }
+        String ip = "127.0.0.1";
+        try {
+            Enumeration<NetworkInterface> n = NetworkInterface.getNetworkInterfaces();
+            for (; n.hasMoreElements(); ) {
+                NetworkInterface e = n.nextElement();
+                System.out.println("Interface: " + e.getName());
+                Enumeration<InetAddress> a = e.getInetAddresses();
+                for (; a.hasMoreElements(); ) {
+                    InetAddress addr = a.nextElement();
+                    if ((addr instanceof Inet4Address)
+                            && (!addr.getHostAddress().equals("127.0.0.1"))) {
+                        return addr.getHostAddress();
                     }
                 }
-
-            } catch (Exception e) {
-                log.warn("Unreachable IP - return {} in {} ", new Object[]{ip, this});
             }
-            return ip;
+
+        } catch (Exception e) {
+            log.warn("Unreachable IP - return {} in {} ", new Object[]{ip, this});
         }
+        return ip;
     }
+}
+
