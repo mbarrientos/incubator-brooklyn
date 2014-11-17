@@ -826,7 +826,9 @@ public abstract class AbstractSoftwareProcessSshDriver extends AbstractSoftwareP
 
     private  boolean isHttpsGitURL(String url){
         boolean isHttpsGitURL;
-        checkNotNull(url, "git URL is NULL.");
+        if(Strings.isNonBlank(url)) {
+            log.info("git URL is null.");
+        }
         isHttpsGitURL=checkGitExtension(url)&&checkHttpsPrefix(url);
         return isHttpsGitURL;
     }
