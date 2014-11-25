@@ -71,6 +71,8 @@ public class ApacheSshDriver extends PhpWebAppSshDriver implements ApacheDriver 
         return getEntity().getConfig(ApacheServer.DEPLOY_RUN_DIR);
     }
 
+
+
     @Override
     public void install() {
         super.install();
@@ -275,16 +277,40 @@ public class ApacheSshDriver extends PhpWebAppSshDriver implements ApacheDriver 
         return result;
     }
 
+    //TODO refactos using the strategy pattern
     private String installPhp() {
-
-        String result = String.format(
-                "sudo apt-get -y install php5" +
-                "\n" +
-                "sudo apt-get -y install php5-mysql" +
-                "\n");
-        return result;
-
+        String result;
+        log.info("**PHP-VERSION:{}", new Object[]{getEntity().getPhpVersion()});
+        if(getEntity().getPhpVersion().equals("5.4")){
+            log.info("********************************");
+            log.info("*******------5.4-------*********");
+            log.info("********************************");
+            return instalPhp54v();
+        }
+        else {
+            return installPhpSuggestedVersionByDefault();
+        }
     }
+
+    private String instalPhp54v() {
+        String result = String.format(
+                "sudo add-apt-repository -y ppa:ondrej/php5-oldstable"+"\n" +
+                        "sudo apt-get update"+"\n"+
+                        "%s",
+                installPhpSuggestedVersionByDefault());
+        return result;
+    }
+
+
+    private String installPhpSuggestedVersionByDefault() {
+        String result = String.format(
+                "sudo apt-get -y install php5" + "\n" +
+                        "sudo apt-get -y install php5-mysql" + "\n");
+        return result;
+    }
+
+
+
 
     //TODO
     @Override
@@ -396,5 +422,4 @@ public class ApacheSshDriver extends PhpWebAppSshDriver implements ApacheDriver 
     private String scapeString(String s) {
         return s.replace("/", "\\/");
     }
-
 }

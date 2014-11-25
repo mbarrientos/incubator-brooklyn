@@ -107,6 +107,10 @@ public class ApacheServerImpl extends PhpWebAppSoftwareProcessImpl implements Ap
         return getConfig(DB_CONNECTION_CONFIG_PARAMS);
     }
 
+    public String getPhpVersion() {
+        return getConfig(SUGGESTED_PHP_VERSION);
+    }
+
 
     @Override
     public int getHttpPort() {

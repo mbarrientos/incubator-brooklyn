@@ -19,6 +19,8 @@
 package brooklyn.entity.webapp;
 
 import brooklyn.config.ConfigKey;
+import brooklyn.entity.basic.ConfigKeys;
+import brooklyn.entity.basic.SoftwareProcess;
 import brooklyn.event.basic.BasicConfigKey;
 import brooklyn.event.basic.MapConfigKey;
 import brooklyn.util.flags.SetFromFlag;
@@ -59,5 +61,10 @@ public interface PhpWebAppService extends WebAppService {
     @SetFromFlag("db_connection_config_params")
     public static final MapConfigKey<String> DB_CONNECTION_CONFIG_PARAMS = new MapConfigKey<String>(String.class,
             "php.db.connection.config.params", "PHP application file to start e.g. main.php, or launch.php");
+
+
+    @SetFromFlag("php.version")
+    public static final ConfigKey<String> SUGGESTED_PHP_VERSION =
+            ConfigKeys.newConfigKeyWithDefault(SoftwareProcess.SUGGESTED_VERSION, "5.5.9");
 
 }
