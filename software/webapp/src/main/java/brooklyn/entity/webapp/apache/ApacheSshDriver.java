@@ -23,16 +23,19 @@ import brooklyn.entity.webapp.PhpWebAppSshDriver;
 import brooklyn.location.basic.SshMachineLocation;
 import brooklyn.util.collections.MutableMap;
 import brooklyn.util.ssh.BashCommands;
+import brooklyn.util.text.Strings;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
 import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
 import java.util.Enumeration;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 
 public class ApacheSshDriver extends PhpWebAppSshDriver implements ApacheDriver {
@@ -59,20 +62,22 @@ public class ApacheSshDriver extends PhpWebAppSshDriver implements ApacheDriver 
     }
 
     @Override
-    public Integer getHttpPort(){
+    public Integer getHttpPort() {
         return getEntity().getHttpPort();
     }
 
     @Override
-    public String getRunDir(){
+    public String getRunDir() {
         return getEntity().getConfig(ApacheServer.DEPLOY_RUN_DIR);
     }
 
+
+
     @Override
-    public void install(){
+    public void install() {
         super.install();
-        if(!isApacheInstalled()){
-            LOG.info("Apache is not installing, so install in {}", new Object[]{this});
+        if (!isApacheInstalled()) {
+            LOG.info("Apache is not installing, then it will be installed in {}", new Object[]{this});
             /*Maybe, we find a old apache configuration file which have to be removed to install the new
             * server without errors.*/
             removeOldConfigFile();
@@ -80,34 +85,34 @@ public class ApacheSshDriver extends PhpWebAppSshDriver implements ApacheDriver 
         }
     }
 
-    private boolean isApacheInstalled(){
-        boolean apacheIsInstalled=false;
-        int result= getMachine().execCommands("apacheInstalled", ImmutableList.of("apache2 -v"));
-        if (result==0)
-            apacheIsInstalled=true;
+    private boolean isApacheInstalled() {
+        boolean apacheIsInstalled = false;
+        int result = getMachine().execCommands("apacheInstalled", ImmutableList.of("apache2 -v"));
+        if (result == 0)
+            apacheIsInstalled = true;
         return apacheIsInstalled;
     }
 
-    private void removeOldConfigFile(){
-        String oldApacheConfigurationFilePath=getEntity().getConfigurationDir()+"/"+"apache2.conf";
-        getMachine().execCommands("deleteOldApacheConfigFile", ImmutableList.of("rm -f"+oldApacheConfigurationFilePath));
+    private void removeOldConfigFile() {
+        String oldApacheConfigurationFilePath = getEntity().getConfigurationDir() + "/" + "apache2.conf";
+        getMachine().execCommands("deleteOldApacheConfigFile", ImmutableList.of("rm -f" + oldApacheConfigurationFilePath));
     }
 
-    private int installApacheServer(){
+    private int installApacheServer() {
         int result;
         LOG.info("Installing Apache Server {}", new Object[]{getEntity()});
-        List<String> commands= ImmutableList.<String>builder().add(BashCommands.
+        List<String> commands = ImmutableList.<String>builder().add(BashCommands.
                 installPackage(MutableMap.of("apt", "apache2"), null)).build();
-        result=newScript(INSTALLING).body.append(commands).execute();
-        if(result!=0)
-            log.warn("Problem installing {} for {}: result {}", new Object[]{ entity, result});
+        result = newScript(INSTALLING).body.append(commands).execute();
+        if (result != 0)
+            log.warn("Problem installing {} for {}: result {}", new Object[]{entity, result});
         else
-            log.info("Installed {} for {} commands {}\n", new Object[]{ result, entity, commands});
+            log.info("Installed {} for {} commands {}\n", new Object[]{result, entity, commands});
         return result;
     }
 
     @Override
-    public void customize(){
+    public void customize() {
         startApacheIfIsNotRunning();
         newScript(CUSTOMIZING)
                 .body.append(
@@ -118,22 +123,23 @@ public class ApacheSshDriver extends PhpWebAppSshDriver implements ApacheDriver 
                 enableServerStatusServerModule(),
                 configureHttpPort(),
                 realoadApacheService(),
-                installPhp()
+                installPhp(),
+                realoadApacheService()
         ).execute();
-        LOG.info("deployInit initial applications from {}", new Object[]{this});
+        LOG.info("DeployInit initial applications from {}", new Object[]{this});
         getEntity().deployInitialApplications();
     }
 
-    private void startApacheIfIsNotRunning(){
-        if(!isRunning())
+    private void startApacheIfIsNotRunning() {
+        if (!isRunning())
             startApache();
     }
 
-    private int startApache(){
-        return  getMachine().execCommands("startApacheIfItIsNeeded", ImmutableList.of("service apache2 start"));
+    private int startApache() {
+        return getMachine().execCommands("startApacheIfItIsNeeded", ImmutableList.of("service apache2 start"));
     }
 
-    private String disableCurrentDeployRunDir(){
+    private String disableCurrentDeployRunDir() {
 
         String result = String.format(
                 "for file in %s%s/*.conf\n" +
@@ -147,31 +153,32 @@ public class ApacheSshDriver extends PhpWebAppSshDriver implements ApacheDriver 
                 getEntity().getConfigurationDir(),
                 getEntity().getAvailableSitesConfigurationFolder(),
                 getEntity().getConfigurationDir());
+        ;
         return result;
     }
 
-    private String realoadApacheService(){
+    private String realoadApacheService() {
         return "set +e\n" +
                 "invoke-rc.d apache2 reload\n";
     }
 
-    private String removeAvailableSitesConfigurationFolder(){
-        String result=String.format(
+    private String removeAvailableSitesConfigurationFolder() {
+        String result = String.format(
                 "rm -rf %s%s/*\n",
                 getEntity().getConfigurationDir(),
                 getEntity().getAvailableSitesConfigurationFolder());
         return result;
     }
 
-    private String  addFolderToAvailablesSitesConfigurationFile(String targetName){
-        String result= String.format(
+    private String addFolderToAvailablesSitesConfigurationFile(String targetName) {
+        String result = String.format(
                 "cat <<EOT >> %s%s/%s\n" +
-                        "#"+targetName+"\n"+
+                        "#" + targetName + "\n" +
                         "<VirtualHost *:%s>\n" +
                         "\tServerAdmin webmaster@localhost\n" +
-                        "\tDocumentRoot %s/"+targetName+"\n"+
-                        "\tErrorLog ${APACHE_LOG_DIR}/error-"+targetName+".log\n" +
-                        "\tCustomLog ${APACHE_LOG_DIR}/access-"+targetName+".log combined\n" +
+                        "\tDocumentRoot %s/" + targetName + "\n" +
+                        "\tErrorLog ${APACHE_LOG_DIR}/error-" + targetName + ".log\n" +
+                        "\tCustomLog ${APACHE_LOG_DIR}/access-" + targetName + ".log combined\n" +
                         "</VirtualHost>\n" +
                         "EOT",
                 getEntity().getConfigurationDir(),
@@ -179,21 +186,21 @@ public class ApacheSshDriver extends PhpWebAppSshDriver implements ApacheDriver 
                 getEntity().getAvailablesSitesConfigurationFile(),
                 getEntity().getHttpPort(),
                 getEntity().getDeployRunDir(),
-                changePermissionsOfFolder(getEntity().getDeployRunDir()+"/"+targetName));
+                changePermissionsOfFolder(getEntity().getDeployRunDir() + "/" + targetName));
         return result;
     }
 
-    private String createDeployRunDirConfigurationFile(){
-        String result= String.format(
-                "%s\n"+
+    private String createDeployRunDirConfigurationFile() {
+        String result = String.format(
+                "%s\n" +
                         "cat > %s%s/%s << \"EOF\"\n" +
                         "#[Brooklyn] Configuration File\n" +
                         "#app_id\n" +
                         "#<VirtualHost * :${PORT}>\n" +
                         "\t#ServerAdmin webmaster@localhost\n" +
-                        "\t#DocumentRoot ${DEPLOY_RUN_DIR}/app_id\n"+
-                        "\t#ErrorLog ${APACHE_LOG_DIR} /error-app_id.log\n"+
-                        "\t#ErrorLog ${APACHE_LOG_DIR} /access-app_id.log combined\n"+
+                        "\t#DocumentRoot ${DEPLOY_RUN_DIR}/app_id\n" +
+                        "\t#ErrorLog ${APACHE_LOG_DIR} /error-app_id.log\n" +
+                        "\t#ErrorLog ${APACHE_LOG_DIR} /access-app_id.log combined\n" +
                         "\n\n\t#SSL_CONFIGURATION\n" +
                         "\t# SSL SETUP\n" +
                         "\t# ServerName www.awesomesite.com/app_id\n" +
@@ -218,15 +225,15 @@ public class ApacheSshDriver extends PhpWebAppSshDriver implements ApacheDriver 
         return result;
     }
 
-    private String createFolderDeployRunDir(){
-        return "mkdir -p "+getRunDir()+"\n";
+    private String createFolderDeployRunDir() {
+        return "mkdir -p " + getRunDir() + "\n";
     }
 
-    private String changePermissionsOfFolder(String folder){
-        return String.format("chown -R %s:%s %s\n",getEntity().getDefaultGroup(), getEntity().getDefaultGroup(),folder);
+    private String changePermissionsOfFolder(String folder) {
+        return String.format("chown -R %s:%s %s\n", getEntity().getDefaultGroup(), getEntity().getDefaultGroup(), folder);
     }
 
-    private String enableAvailableDeploymentRunDir(){
+    private String enableAvailableDeploymentRunDir() {
         String result = String.format(
                 "for file in %s%s/*.conf\n" +
                         "do\n" +
@@ -240,18 +247,19 @@ public class ApacheSshDriver extends PhpWebAppSshDriver implements ApacheDriver 
         return result;
     }
 
-    private String enableServerStatusServerModule(){
+    private String enableServerStatusServerModule() {
         String result;
-        result= String.format(
+        result = String.format(
                 "cat <<EOT >> %s/apache2.conf\n" +
                         "<Location /server-status>\n" +
                         "\tSetHandler server-status\n" +
                         "\tOrder deny,allow\n" +
-                        "\tDeny from all\n" +
-                        "\tAllow from localhost\n" +
-                        "\tAllow from %s\n" +
+                        "\t#Deny from all\n" +
+                        "\t#Allow from localhost\n" +
+                        "\t#Allow from %s\n" +
+                        "\tAllow from all\n" +
                         "</Location>\n" +
-                        "ExtendedStatus On\n"+
+                        "ExtendedStatus On\n" +
                         "EOT\n",
                 getEntity().getConfigurationDir(),
                 getBrooklynIPv4());
@@ -259,9 +267,9 @@ public class ApacheSshDriver extends PhpWebAppSshDriver implements ApacheDriver 
     }
 
     //TODO the port configuration could be modified. So it is needed find Listen and change the port
-    private String configureHttpPort(){
+    private String configureHttpPort() {
         String result;
-        result= String.format(
+        result = String.format(
                 "sed -i 's@Listen[ 0-9]\\+@Listen %s@g' %s/ports.conf",
                 getEntity().getHttpPort(),
                 getEntity().getConfigurationDir()
@@ -269,14 +277,40 @@ public class ApacheSshDriver extends PhpWebAppSshDriver implements ApacheDriver 
         return result;
     }
 
-    private String installPhp(){
-
-        String result = String.format(
-                "sudo apt-get -y install php5" +
-                        "\n");
-        return result;
-
+    //TODO refactos using the strategy pattern
+    private String installPhp() {
+        String result;
+        log.info("**PHP-VERSION:{}", new Object[]{getEntity().getPhpVersion()});
+        if(getEntity().getPhpVersion().equals("5.4")){
+            log.info("********************************");
+            log.info("*******------5.4-------*********");
+            log.info("********************************");
+            return instalPhp54v();
+        }
+        else {
+            return installPhpSuggestedVersionByDefault();
+        }
     }
+
+    private String instalPhp54v() {
+        String result = String.format(
+                "sudo add-apt-repository -y ppa:ondrej/php5-oldstable"+"\n" +
+                        "sudo apt-get update"+"\n"+
+                        "%s",
+                installPhpSuggestedVersionByDefault());
+        return result;
+    }
+
+
+    private String installPhpSuggestedVersionByDefault() {
+        String result = String.format(
+                "sudo apt-get -y install php5" + "\n" +
+                        "sudo apt-get -y install php5-mysql" + "\n");
+        return result;
+    }
+
+
+
 
     //TODO
     @Override
@@ -286,19 +320,19 @@ public class ApacheSshDriver extends PhpWebAppSshDriver implements ApacheDriver 
     }
 
     @Override
-    public String deployGitResource(String url, String targetName){
+    public String deployGitResource(String url, String targetName) {
         super.deployGitResource(url, targetName);
         newScript(CUSTOMIZING)
                 .body.append(
                 addFolderToAvailablesSitesConfigurationFile(targetName),
                 realoadApacheService(),
                 enableAvailableDeploymentRunDir()).execute();
-
+        stablishDBConnectionstablishDBConnection(getEntity().getDeployRunDir() + "/" + targetName);
         return targetName;
     }
 
     @Override
-    public String deployTarballResource(String url, String targetName){
+    public String deployTarballResource(String url, String targetName) {
         super.deployTarballResource(url, targetName);
         newScript(CUSTOMIZING)
                 .body.append(
@@ -311,25 +345,22 @@ public class ApacheSshDriver extends PhpWebAppSshDriver implements ApacheDriver 
 
     @Override
     public boolean isRunning() {
-        boolean isApacheRunning=false;
+        boolean isApacheRunning = false;
         //int resultOfCommand = getMachine().execCommands("apacheIsRunning", ImmutableList.of("service apache2 status"));
-        String command="service apache2 status";
-        int resultOfCommand=newScript(STOPPING)
+        String command = "service apache2 status";
+        int resultOfCommand = newScript(STOPPING)
                 .body.append(command).execute();
-        if (resultOfCommand==0)
-            isApacheRunning=true;
-        return  isApacheRunning;
+        if (resultOfCommand == 0)
+            isApacheRunning = true;
+        return isApacheRunning;
     }
-
 
     //TODO merge with the stopApacheMethod in any way
     @Override
     public void stop() {
-
-        String command="service apache2 stop";
+        String command = "service apache2 stop";
         newScript(STOPPING)
                 .body.append(command).execute();
-
     }
 
     @Override
@@ -338,7 +369,6 @@ public class ApacheSshDriver extends PhpWebAppSshDriver implements ApacheDriver 
     }
 
     private String getBrooklynIPv4() {
-
         String ip = "127.0.0.1";
         try {
             Enumeration<NetworkInterface> n = NetworkInterface.getNetworkInterfaces();
@@ -360,5 +390,36 @@ public class ApacheSshDriver extends PhpWebAppSshDriver implements ApacheDriver 
         }
         return ip;
     }
-}
 
+    private void stablishDBConnectionstablishDBConnection(String targetNameApplication) {
+        String configurationDBFilePath;
+        if (!Strings.isEmpty(getEntity().getDbConnectionFileConfig())) {
+            configurationDBFilePath = targetNameApplication + "/" + getEntity().getDbConnectionFileConfig();
+            configureDatabaseFile(configurationDBFilePath);
+        }
+    }
+
+    private void configureDatabaseFile(String pathFile) {
+        Map<String, String> databaseParameters = getEntity().getDbConnectionConfigParams();
+        String command;
+        Set<String> configurationParameters;
+        if (databaseParameters != null) {
+            configurationParameters = databaseParameters.keySet();
+            log.info("DATABASE-Command!! Path {} ", new Object[]{pathFile});
+            log.info("DATABASE-Command!! Number Keys {} ", new Object[]{configurationParameters.size()});
+            for (String configurationParameter : configurationParameters) {
+                command = String.format(
+                        "sed -i 's/define([ ]*'\\''%s'\\''[ ]*,[ ]*'\\''[ a-zA-Z0-9'.']*'\\''[ ]*);/define('\\''%s'\\'' , '\\''%s'\\'');/g' %s",
+                        configurationParameter, configurationParameter, scapeString(databaseParameters.get(configurationParameter)), pathFile);
+                log.info("DATABASE-Command!!:: " + command);
+                getMachine().execCommands("configParamDatabaseConnection", ImmutableList.of(command));
+            }
+//            Collection<String> st = getEntity().phpSys();
+
+        }
+    }
+
+    private String scapeString(String s) {
+        return s.replace("/", "\\/");
+    }
+}

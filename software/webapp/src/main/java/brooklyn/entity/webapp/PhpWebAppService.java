@@ -19,8 +19,12 @@
 package brooklyn.entity.webapp;
 
 import brooklyn.config.ConfigKey;
+import brooklyn.entity.basic.ConfigKeys;
+import brooklyn.entity.basic.SoftwareProcess;
 import brooklyn.event.basic.BasicConfigKey;
+import brooklyn.event.basic.MapConfigKey;
 import brooklyn.util.flags.SetFromFlag;
+
 import java.util.List;
 
 
@@ -34,12 +38,33 @@ public interface PhpWebAppService extends WebAppService {
     public static final ConfigKey<String> APP_GIT_REPO_URL = new BasicConfigKey<String>(
             String.class, "php.app.git.repo.url ", "The Git repository where the application source code is stored (gitRepo)");
 
+    @SuppressWarnings({ "unchecked", "rawtypes" })
     @SetFromFlag("app_name")
     public static final ConfigKey<String> APP_NAME = new BasicConfigKey(
-            List.class, "php.app.name", "The name of the PHP application");
+            String.class, "php.app.name", "The name of the PHP application");
 
+    @SuppressWarnings({ "unchecked", "rawtypes" })
     @SetFromFlag("app_start_file")
     public static final ConfigKey<List<String>> APP_START_FILE = new BasicConfigKey(
             List.class, "php.app.start.file", "PHP application file to start e.g. main.php, or launch.php");
+
+    @SuppressWarnings({ "unchecked", "rawtypes" })
+    @SetFromFlag("db_connection_file_config")
+    public static final ConfigKey<String> DB_CONNECTION_FILE_CONFIG = new BasicConfigKey(
+            String.class, "php.db.connection.file.config", "The name of the PHP application");
+
+//    @SuppressWarnings({ "unchecked", "rawtypes" })
+//    @SetFromFlag("db_connection_config_params")
+//    public static final ConfigKey<Map<String,String>> DB_CONNECTION_CONFIG_PARAMS = new BasicConfigKey(
+//            Map.class, "php.db.connection.config.params", "PHP application file to start e.g. main.php, or launch.php");
+
+    @SetFromFlag("db_connection_config_params")
+    public static final MapConfigKey<String> DB_CONNECTION_CONFIG_PARAMS = new MapConfigKey<String>(String.class,
+            "php.db.connection.config.params", "PHP application file to start e.g. main.php, or launch.php");
+
+
+    @SetFromFlag("php.version")
+    public static final ConfigKey<String> SUGGESTED_PHP_VERSION =
+            ConfigKeys.newConfigKeyWithDefault(SoftwareProcess.SUGGESTED_VERSION, "5.5.9");
 
 }

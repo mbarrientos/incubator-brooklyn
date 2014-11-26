@@ -40,7 +40,7 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
 
 
-public class ApacheServerImpl extends PhpWebAppSoftwareProcessImpl implements ApacheServer{
+public class ApacheServerImpl extends PhpWebAppSoftwareProcessImpl implements ApacheServer {
 
     public static final Logger log = LoggerFactory.getLogger(ApacheServerImpl.class);
 
@@ -49,11 +49,11 @@ public class ApacheServerImpl extends PhpWebAppSoftwareProcessImpl implements Ap
     private Enricher serviceUpEnricher;
 
 
-    public ApacheServerImpl(){
+    public ApacheServerImpl() {
         super();
     }
 
-    public ApacheServerImpl(Map flags){
+    public ApacheServerImpl(Map flags) {
         this(flags, null);
     }
 
@@ -71,45 +71,70 @@ public class ApacheServerImpl extends PhpWebAppSoftwareProcessImpl implements Ap
         return (ApacheDriver) super.getDriver();
     }
 
-    public String getDefaultGroup(){
+    public String getDefaultGroup() {
         return getConfig(DEFAULT_GROUP);
     }
 
-    public void setAppUser(String appName){
+    public void setAppUser(String appName) {
         setConfig(APP_NAME, appName);
     }
 
-    public String getInstallDir(){return getConfig(ApacheServer.INSTALL_DIR);}
+    public String getInstallDir() {
+        return getConfig(ApacheServer.INSTALL_DIR);
+    }
 
-    public String getConfigurationDir(){return getConfig(CONFIGURATION_DIR);}
+    public String getConfigurationDir() {
+        return getConfig(CONFIGURATION_DIR);
+    }
 
-    public String getAvailablesSitesConfigurationFile(){return getConfig(AVAILABLES_SITES_CONFIGURATION_FILE);}
+    public String getAvailablesSitesConfigurationFile() {
+        return getConfig(AVAILABLES_SITES_CONFIGURATION_FILE);
+    }
 
-    public String  getDeployRunDir(){ return getConfig(DEPLOY_RUN_DIR);}
+    public String getDeployRunDir() {
+        return getConfig(DEPLOY_RUN_DIR);
+    }
 
-    public String  getAvailableSitesConfigurationFolder(){ return getConfig(AVAILABLE_SITES_CONFIGURATION_FOLDER);}
+    public String getAvailableSitesConfigurationFolder() {
+        return getConfig(AVAILABLE_SITES_CONFIGURATION_FOLDER);
+    }
+
+    public String getDbConnectionFileConfig() {
+        return getConfig(DB_CONNECTION_FILE_CONFIG);
+    }
+
+    public Map<String, String> getDbConnectionConfigParams() {
+        return getConfig(DB_CONNECTION_CONFIG_PARAMS);
+    }
+
+    public String getPhpVersion() {
+        return getConfig(SUGGESTED_PHP_VERSION);
+    }
+
 
     @Override
-    public int getHttpPort(){ return getAttribute(ApacheServer.HTTP_PORT);}
+    public int getHttpPort() {
+        return getAttribute(ApacheServer.HTTP_PORT);
+    }
 
 
-    private Function<String,String> parseApacheStatus(final String key){
+    private Function<String, String> parseApacheStatus(final String key) {
         return new Function<String, String>() {
             @Nullable
             @Override
             public String apply(@Nullable String s) {
-                String result=null;
-                if((s!=null)&&(key!=null)&&(s.contains(key))){
-                    int i=s.indexOf(key)+key.length()+1;
-                    int j=s.indexOf("\n", i);
-                    result= s.substring(i, j).trim();
+                String result = null;
+                if ((s != null) && (key != null) && (s.contains(key))) {
+                    int i = s.indexOf(key) + key.length() + 1;
+                    int j = s.indexOf("\n", i);
+                    result = s.substring(i, j).trim();
                 }
                 return result;
             }
         };
     }
 
-    private <T>Function<String, T> cast(final Class<T> expected){
+    private <T> Function<String, T> cast(final Class<T> expected) {
         return new Function<String, T>() {
             @Nullable
             @Override
@@ -118,14 +143,11 @@ public class ApacheServerImpl extends PhpWebAppSoftwareProcessImpl implements Ap
                     return (T) null;
                 } else if (expected == long.class || expected == Long.class) {
                     return (T) (Long) Long.parseLong(s);
-                }
-                else if (expected == int.class || expected == Integer.class) {
+                } else if (expected == int.class || expected == Integer.class) {
                     return (T) (Integer) Integer.parseInt(s);
-                }
-                else if (expected == double.class || expected == Double.class) {
+                } else if (expected == double.class || expected == Double.class) {
                     return (T) (Double) Double.parseDouble(s);
-                }
-                else {
+                } else {
                     return (T) (String) s;
                 }
             }
@@ -136,19 +158,19 @@ public class ApacheServerImpl extends PhpWebAppSoftwareProcessImpl implements Ap
     protected void connectSensors() {
         super.connectSensors();
         functionFeed = FunctionFeed.builder()
-                    .entity(this)
-                    .poll(new FunctionPollConfig<Object, Boolean>(SERVICE_UP)
-                            .period(500, TimeUnit.MILLISECONDS)
-                            .callable(new Callable<Boolean>() {
-                                public Boolean call() throws Exception {
-                                    return getDriver().isRunning();
-                                }
-                            })
-                            .onException(Functions.constant(Boolean.FALSE)))
-                            .build();
+                .entity(this)
+                .poll(new FunctionPollConfig<Object, Boolean>(SERVICE_UP)
+                        .period(500, TimeUnit.MILLISECONDS)
+                        .callable(new Callable<Boolean>() {
+                            public Boolean call() throws Exception {
+                                return getDriver().isRunning();
+                            }
+                        })
+                        .onException(Functions.constant(Boolean.FALSE)))
+                .build();
 
         String monitorUri = String.format("http://%s:%s/%s",
-                getAttribute(Attributes.HOSTNAME),getHttpPort(),getConfig(MONITOR_URL));
+                getAttribute(Attributes.HOSTNAME), getHttpPort(), getConfig(MONITOR_URL));
         httpFeed = HttpFeed.builder()
                 .entity(this)
                 .period(200)
@@ -157,8 +179,8 @@ public class ApacheServerImpl extends PhpWebAppSoftwareProcessImpl implements Ap
                         .onSuccess(HttpValueFunctions.responseCodeEquals(200))
                         .onFailureOrException(Functions.constant(false)))
                 .poll(new HttpPollConfig<Long>(TOTAL_ACCESSES).onSuccess(
-                                Functionals.chain(HttpValueFunctions.stringContentsFunction(),
-                                        parseApacheStatus("Total Accesses"), cast(Long.class))))
+                        Functionals.chain(HttpValueFunctions.stringContentsFunction(),
+                                parseApacheStatus("Total Accesses"), cast(Long.class))))
                 .poll(new HttpPollConfig<Long>(TOTAL_KBYTE).onSuccess(
                         Functionals.chain(HttpValueFunctions.stringContentsFunction(),
                                 parseApacheStatus("Total kBytes"), cast(Long.class))))

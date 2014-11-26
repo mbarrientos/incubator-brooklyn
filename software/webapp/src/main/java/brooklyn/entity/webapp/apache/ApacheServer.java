@@ -28,14 +28,14 @@ import brooklyn.entity.trait.HasShortName;
 import brooklyn.entity.webapp.PhpWebAppService;
 import brooklyn.entity.webapp.PhpWebAppSoftwareProcess;
 import brooklyn.event.AttributeSensor;
-import brooklyn.event.basic.BasicAttributeSensorAndConfigKey.StringAttributeSensorAndConfigKey;
 import brooklyn.event.basic.BasicAttributeSensorAndConfigKey;
+import brooklyn.event.basic.BasicAttributeSensorAndConfigKey.StringAttributeSensorAndConfigKey;
 import brooklyn.event.basic.BasicConfigKey;
 import brooklyn.event.basic.PortAttributeSensorAndConfigKey;
 import brooklyn.event.basic.Sensors;
 import brooklyn.util.flags.SetFromFlag;
 
-@Catalog(name="HTTP Server", description="Apache HTTP Server Project is an open-source HTTP server")
+@Catalog(name = "HTTP Server", description = "Apache HTTP Server Project is an open-source HTTP server")
 @ImplementedBy(ApacheServerImpl.class)
 public interface ApacheServer extends PhpWebAppSoftwareProcess, PhpWebAppService, HasShortName {
 
@@ -75,7 +75,7 @@ public interface ApacheServer extends PhpWebAppSoftwareProcess, PhpWebAppService
             "apache.default.group", "default of Apache  to run the applications deployed in DEPLOY_RUN_DIR", "www-data");
 
     @SetFromFlag("http_port")
-    PortAttributeSensorAndConfigKey HTTP_PORT=
+    PortAttributeSensorAndConfigKey HTTP_PORT =
             new PortAttributeSensorAndConfigKey("apache.http.port", "Http port where Apache is listening", "80");
 
     @SetFromFlag("monitor_url")
@@ -87,37 +87,36 @@ public interface ApacheServer extends PhpWebAppSoftwareProcess, PhpWebAppService
             Sensors.newBooleanSensor("apache.monitor.up", "Monitor server is responding with OK");
 
     @SetFromFlag("total_accesses")
-    AttributeSensor<Long> TOTAL_ACCESSES=
+    AttributeSensor<Long> TOTAL_ACCESSES =
             Sensors.newLongSensor("apache.total.accesses", "Accesses to apache");
 
     @SetFromFlag("total_kbyte")
-    AttributeSensor<Long> TOTAL_KBYTE=
+    AttributeSensor<Long> TOTAL_KBYTE =
             Sensors.newLongSensor("apache.total.kbyte", "Total traffic in KB");
 
     @SetFromFlag("cpu_load")
-    AttributeSensor<Double> CPU_LOAD=
+    AttributeSensor<Double> CPU_LOAD =
             Sensors.newDoubleSensor("apache.cpu.load", "CPU load percent");
 
     @SetFromFlag("up_time")
-    AttributeSensor<Long> UP_TIME=
+    AttributeSensor<Long> UP_TIME =
             Sensors.newLongSensor("apache.up.time", "Time spent setting up the server");
 
     @SetFromFlag("request_per_sec")
-    AttributeSensor<Double> REQUEST_PER_SEC=
+    AttributeSensor<Double> REQUEST_PER_SEC =
             Sensors.newDoubleSensor("apache.request.per.sec", "Request per sec managed by the server");
 
     @SetFromFlag("bytes_per_sec")
-    AttributeSensor<Double> BYTES_PER_SEC=
+    AttributeSensor<Double> BYTES_PER_SEC =
             Sensors.newDoubleSensor("apache.bytes.per.sec", "Bytes per second");
 
     @SetFromFlag("bytes_per_req")
-    AttributeSensor<Double> BYTES_PER_REQ=
+    AttributeSensor<Double> BYTES_PER_REQ =
             Sensors.newDoubleSensor("apache.bytes.per.req", "Bytes per requests");
 
     @SetFromFlag("busy_workers")
-        AttributeSensor<Integer> BUSY_WORKERS=
+    AttributeSensor<Integer> BUSY_WORKERS =
             Sensors.newIntegerSensor("apache.busy.workers", "Number of busy worker");
-
 
 
 }

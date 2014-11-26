@@ -24,6 +24,4 @@ import brooklyn.entity.webapp.PhpWebAppDriver;
 public interface ApacheDriver extends PhpWebAppDriver {
 
 
-
-
 }

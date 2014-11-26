@@ -20,12 +20,11 @@ package brooklyn.entity.webapp;
 
 
 import brooklyn.entity.basic.SoftwareProcessDriver;
+
 import java.util.Set;
 
 
 public interface PhpWebAppDriver extends SoftwareProcessDriver {
-
-
 
     Set<String> getEnabledProtocols();
 
@@ -33,9 +32,7 @@ public interface PhpWebAppDriver extends SoftwareProcessDriver {
 
     Integer getHttpsPort();
 
-
     HttpsSslConfig getHttpsSslConfig();
-
 
     String deployGitResource(String url, String targetName);
 
@@ -44,8 +41,6 @@ public interface PhpWebAppDriver extends SoftwareProcessDriver {
     void undeploy(String targetName);
 
     SourceNameResolver getSourceNameResolver();
-
-
 
 
 }
