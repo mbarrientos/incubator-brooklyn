@@ -62,9 +62,9 @@ public interface PhpWebAppService extends WebAppService {
     public static final MapConfigKey<String> DB_CONNECTION_CONFIG_PARAMS = new MapConfigKey<String>(String.class,
             "php.db.connection.config.params", "PHP application file to start e.g. main.php, or launch.php");
 
-
     @SetFromFlag("php.version")
-    public static final ConfigKey<String> SUGGESTED_PHP_VERSION =
-            ConfigKeys.newConfigKeyWithDefault(SoftwareProcess.SUGGESTED_VERSION, "5.5.9");
+    public static final ConfigKey<String> SUGGESTED_PHP_VERSION = ConfigKeys.newStringConfigKey(
+            "php.version", "PHP version used", "5.5.9");
+
 
 }

@@ -281,10 +281,7 @@ public class ApacheSshDriver extends PhpWebAppSshDriver implements ApacheDriver 
     private String installPhp() {
         String result;
         log.info("**PHP-VERSION:{}", new Object[]{getEntity().getPhpVersion()});
-        if(getEntity().getPhpVersion().equals("5.4")){
-            log.info("********************************");
-            log.info("*******------5.4-------*********");
-            log.info("********************************");
+        if(getEntity().getPhpVersion().equals("5.4")){;
             return instalPhp54v();
         }
         else {
