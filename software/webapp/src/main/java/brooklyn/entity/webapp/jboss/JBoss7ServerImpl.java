@@ -27,9 +27,7 @@ import brooklyn.config.render.RendererHints;
 import brooklyn.enricher.Enrichers;
 import brooklyn.entity.Entity;
 import brooklyn.entity.basic.Attributes;
-import brooklyn.entity.webapp.HttpsSslConfig;
 import brooklyn.entity.webapp.JavaWebAppSoftwareProcessImpl;
-import brooklyn.entity.webapp.WebAppServiceMethods;
 import brooklyn.event.feed.http.HttpFeed;
 import brooklyn.event.feed.http.HttpPollConfig;
 import brooklyn.event.feed.http.HttpValueFunctions;
@@ -181,32 +179,6 @@ public class JBoss7ServerImpl extends JavaWebAppSoftwareProcessImpl implements J
         return getConfig(DEPLOYMENT_TIMEOUT);
     }
 
-    public boolean isHttpEnabled() {
-        return WebAppServiceMethods.isProtocolEnabled(this, "HTTP");
-    }
-    
-    public boolean isHttpsEnabled() {
-        return WebAppServiceMethods.isProtocolEnabled(this, "HTTPS");
-    }
-    
-    public Integer getHttpPort() {
-        return getAttribute(HTTP_PORT);
-    }
-    
-    public Integer getHttpsPort() {
-        return getAttribute(HTTPS_PORT);
-    }
-    
-    public String getHttpsSslKeyAlias() {
-        HttpsSslConfig config = getAttribute(HTTPS_SSL_CONFIG);
-        return (config == null) ? null : config.getKeyAlias();
-    }
-    
-    public String getHttpsSslKeystorePassword() {
-        HttpsSslConfig config = getAttribute(HTTPS_SSL_CONFIG);
-        return (config == null) ? null : config.getKeystorePassword();
-    }
-    
     /** Path of the keystore file on the AS7 server */
     public String getHttpsSslKeystoreFile() {
         return getDriver().getSslKeystoreFile();

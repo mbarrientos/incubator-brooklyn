@@ -22,8 +22,8 @@ import static org.testng.Assert.assertEquals;
 
 import java.io.File;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.Callable;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -32,29 +32,29 @@ import org.testng.annotations.BeforeMethod;
 
 import brooklyn.catalog.BrooklynCatalog;
 import brooklyn.catalog.CatalogItem;
-import brooklyn.config.BrooklynProperties;
+import brooklyn.catalog.internal.CatalogUtils;
+import brooklyn.entity.Application;
 import brooklyn.entity.basic.Entities;
 import brooklyn.entity.basic.EntityFunctions;
 import brooklyn.entity.basic.StartableApplication;
 import brooklyn.entity.rebind.persister.BrooklynMementoPersisterToObjectStore;
 import brooklyn.entity.rebind.persister.FileBasedObjectStore;
 import brooklyn.entity.rebind.persister.PersistMode;
+import brooklyn.entity.trait.Startable;
 import brooklyn.management.ManagementContext;
+import brooklyn.management.Task;
 import brooklyn.management.ha.HighAvailabilityMode;
 import brooklyn.management.internal.LocalManagementContext;
 import brooklyn.management.internal.ManagementContextInternal;
 import brooklyn.mementos.BrooklynMementoManifest;
-import brooklyn.mementos.BrooklynMementoRawData;
-import brooklyn.test.entity.LocalManagementContextForTests;
-import brooklyn.util.io.FileUtil;
 import brooklyn.util.os.Os;
+import brooklyn.util.repeat.Repeater;
+import brooklyn.util.task.BasicExecutionManager;
 import brooklyn.util.text.Identifiers;
 import brooklyn.util.time.Duration;
 
 import com.google.api.client.util.Sets;
-import com.google.common.annotations.Beta;
 import com.google.common.collect.FluentIterable;
-import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
 
 public abstract class RebindTestFixture<T extends StartableApplication> {
@@ -71,6 +71,7 @@ public abstract class RebindTestFixture<T extends StartableApplication> {
     protected T origApp;
     protected T newApp;
     protected ManagementContext newManagementContext;
+
 
     @BeforeMethod(alwaysRun=true)
     public void setUp() throws Exception {
@@ -99,6 +100,37 @@ public abstract class RebindTestFixture<T extends StartableApplication> {
                 .forLive(useLiveManagementContext())
                 .emptyCatalog(useEmptyCatalog())
                 .buildUnstarted();
+    }
+
+    /** terminates the original management context (not destroying items) and points it at the new one (and same for apps); 
+     * then clears the variables for the new one, so you can re-rebind */
+    protected void switchOriginalToNewManagementContext() {
+        origManagementContext.getRebindManager().stopPersistence();
+        for (Application e: origManagementContext.getApplications()) ((Startable)e).stop();
+        waitForTaskCountToBecome(origManagementContext, 0);
+        origManagementContext.terminate();
+        origManagementContext = (LocalManagementContext) newManagementContext;
+        origApp = newApp;
+        newManagementContext = null;
+        newApp = null;
+    }
+
+    public static void waitForTaskCountToBecome(final ManagementContext mgmt, final int allowedMax) {
+        Repeater.create().every(Duration.millis(20)).limitTimeTo(Duration.TEN_SECONDS).until(new Callable<Boolean>() {
+            @Override
+            public Boolean call() throws Exception {
+                ((LocalManagementContext)mgmt).getGarbageCollector().gcIteration();
+                long taskCountAfterAtOld = ((BasicExecutionManager)mgmt.getExecutionManager()).getNumIncompleteTasks();
+                List<Task<?>> tasks = ((BasicExecutionManager)mgmt.getExecutionManager()).getAllTasks();
+                int unendedTasks = 0;
+                for (Task<?> t: tasks) {
+                    if (!t.isDone()) unendedTasks++;
+                }
+                LOG.info("Count of incomplete tasks now "+taskCountAfterAtOld+", "+unendedTasks+" unended; tasks remembered are: "+
+                    tasks);
+                return taskCountAfterAtOld<=allowedMax;
+            }
+        }).runRequiringTrue();
     }
 
     protected boolean useLiveManagementContext() {
@@ -131,95 +163,83 @@ public abstract class RebindTestFixture<T extends StartableApplication> {
         origManagementContext = null;
     }
 
+    /** rebinds, and sets newApp */
+    protected T rebind() throws Exception {
+        return rebind(RebindOptions.create());
+    }
+
+    /**
+     * Checking serializable is overly strict.
+     * State only needs to be xstream-serializable, which does not require `implements Serializable`. 
+     * Also, the xstream serializer has some special hooks that replaces an entity reference with 
+     * a marker for that entity, etc.
+     * 
+     * @deprecated since 0.7.0; use {@link #rebind()} or {@link #rebind(RebindOptions)})
+     */
+    @Deprecated
+    protected T rebind(boolean checkSerializable) throws Exception {
+        return rebind(RebindOptions.create().checkSerializable(checkSerializable));
+    }
+    
+    /**
+     * Checking serializable is overly strict.
+     * State only needs to be xstream-serializable, which does not require `implements Serializable`. 
+     * Also, the xstream serializer has some special hooks that replaces an entity reference with 
+     * a marker for that entity, etc.
+     * 
+     * @deprecated since 0.7.0; use {@link #rebind(RebindOptions)})
+     */
+    @Deprecated
+    protected T rebind(boolean checkSerializable, boolean terminateOrigManagementContext) throws Exception {
+        return rebind(RebindOptions.create()
+                .checkSerializable(checkSerializable)
+                .terminateOrigManagementContext(terminateOrigManagementContext));
+    }
+
+    /**
+     * @deprecated since 0.7.0; use {@link #rebind(RebindOptions)})
+     */
+    @Deprecated
+    protected T rebind(RebindExceptionHandler exceptionHandler) throws Exception {
+        return rebind(RebindOptions.create().exceptionHandler(exceptionHandler));
+    }
+
+    /**
+     * @deprecated since 0.7.0; use {@link #rebind(RebindOptions)})
+     */
+    @Deprecated
+    protected T rebind(ManagementContext newManagementContext, RebindExceptionHandler exceptionHandler) throws Exception {
+        return rebind(RebindOptions.create()
+                .newManagementContext(newManagementContext)
+                .exceptionHandler(exceptionHandler));
+    }
+    
+    @SuppressWarnings("unchecked")
+    protected T rebind(RebindOptions options) throws Exception {
+        if (newApp != null || newManagementContext != null) {
+            throw new IllegalStateException("already rebound - use switchOriginalToNewManagementContext() if you are trying to rebind multiple times");
+        }
+        
+        options = RebindOptions.create(options);
+        if (options.classLoader == null) options.classLoader(classLoader);
+        if (options.mementoDir == null) options.mementoDir(mementoDir);
+        if (options.origManagementContext == null) options.origManagementContext(origManagementContext);
+        if (options.newManagementContext == null) options.newManagementContext(createNewManagementContext());
+        
+        RebindTestUtils.waitForPersisted(origApp);
+        
+        newManagementContext = options.newManagementContext;
+        newApp = (T) RebindTestUtils.rebind(options);
+        return newApp;
+    }
+
     /**
      * Dumps out the persisted mementos that are at the given directory.
-     * 
-     * Binds to the persisted state (as a "hot standby") to load the raw data (as strings), and to write out the
-     * entity, location, policy, enricher, feed and catalog-item data.
      * 
      * @param dir The directory containing the persisted state (e.g. {@link #mementoDir} or {@link #mementoDirBackup})
      */
     protected void dumpMementoDir(File dir) {
-        LocalManagementContextForTests mgmt = new LocalManagementContextForTests(BrooklynProperties.Factory.newEmpty());
-        FileBasedObjectStore store = null;
-        BrooklynMementoPersisterToObjectStore persister = null;
-        try {
-            store = new FileBasedObjectStore(dir);
-            store.injectManagementContext(mgmt);
-            store.prepareForSharedUse(PersistMode.AUTO, HighAvailabilityMode.HOT_STANDBY);
-            persister = new BrooklynMementoPersisterToObjectStore(store, BrooklynProperties.Factory.newEmpty(), classLoader);
-            BrooklynMementoRawData data = persister.loadMementoRawData(RebindExceptionHandlerImpl.builder().build());
-            List<BrooklynObjectType> types = ImmutableList.of(BrooklynObjectType.ENTITY, BrooklynObjectType.LOCATION, 
-                    BrooklynObjectType.POLICY, BrooklynObjectType.ENRICHER, BrooklynObjectType.FEED, 
-                    BrooklynObjectType.CATALOG_ITEM);
-            for (BrooklynObjectType type : types) {
-                LOG.info(type+" ("+data.getObjectsOfType(type).keySet()+"):");
-                for (Map.Entry<String, String> entry : data.getObjectsOfType(type).entrySet()) {
-                    LOG.info("\t"+type+" "+entry.getKey()+": "+entry.getValue());
-                }
-            }
-        } finally {
-            if (persister != null) persister.stop(false);
-            if (store != null) store.close();
-            mgmt.terminate();
-        }
-    }
-    
-    /** rebinds, and sets newApp */
-    protected T rebind() throws Exception {
-        return rebind(true);
-    }
-
-    /**
-     * TODO We should (probably?!) change everywhere from asserting that they are serializable. 
-     * They only need to be xstream-serializable, which does not require `implements Serializable`. 
-     * Also, the xstream serializer has some special hooks that replaces an entity reference with 
-     * a marker for that entity, etc. Suggest we change the default {@link #rebind()} to use 
-     * {@code checkSerializable==false}, and deprecate this + the other overloaded methods?
-     */
-    protected T rebind(boolean checkSerializable) throws Exception {
-        // TODO What are sensible defaults?!
-        return rebind(checkSerializable, false);
-    }
-
-    @SuppressWarnings("unchecked")
-    protected T rebind(boolean checkSerializable, boolean terminateOrigManagementContext) throws Exception {
-        return rebind(checkSerializable, terminateOrigManagementContext, (File)null);
-    }
-    
-    @Beta // temporary method while debugging; Aled will refactor all of this soon!
-    @SuppressWarnings("unchecked")
-    protected T rebind(boolean checkSerializable, boolean terminateOrigManagementContext, File backupDir) throws Exception {
-        if (newApp!=null || newManagementContext!=null) throw new IllegalStateException("already rebound");
-        
-        RebindTestUtils.waitForPersisted(origApp);
-        if (checkSerializable) {
-            RebindTestUtils.checkCurrentMementoSerializable(origApp);
-        }
-        if (terminateOrigManagementContext) {
-            origManagementContext.terminate();
-        }
-
-        if (backupDir != null) {
-            FileUtil.copyDir(mementoDir, backupDir);
-            FileUtil.setFilePermissionsTo700(backupDir);
-        }
-
-        newManagementContext = createNewManagementContext();
-        newApp = (T) RebindTestUtils.rebind((LocalManagementContext)newManagementContext, classLoader);
-        return newApp;
-    }
-
-    @SuppressWarnings("unchecked")
-    protected T rebind(RebindExceptionHandler exceptionHandler) throws Exception {
-        RebindTestUtils.waitForPersisted(origApp);
-        return (T) RebindTestUtils.rebind(mementoDir, classLoader, exceptionHandler);
-    }
-
-    @SuppressWarnings("unchecked")
-    protected T rebind(ManagementContext newManagementContext, RebindExceptionHandler exceptionHandler) throws Exception {
-        RebindTestUtils.waitForPersisted(origApp);
-        return (T) RebindTestUtils.rebind(newManagementContext, mementoDir, classLoader, exceptionHandler);
+        RebindTestUtils.dumpMementoDir(dir);
     }
     
     protected BrooklynMementoManifest loadMementoManifest() throws Exception {
@@ -242,8 +262,10 @@ public abstract class RebindTestFixture<T extends StartableApplication> {
         Set<String> expectedIds = getCatalogItemIds(expected.getCatalogItems());
         assertEquals(actualIds.size(), Iterables.size(actual.getCatalogItems()), "id keyset size != size of catalog. Are there duplicates in the catalog?");
         assertEquals(actualIds, expectedIds);
-        for (String id : actualIds) {
-            assertCatalogItemsEqual(actual.getCatalogItem(id), expected.getCatalogItem(id));
+        for (String versionedId : actualIds) {
+            String id = CatalogUtils.getIdFromVersionedId(versionedId);
+            String version = CatalogUtils.getVersionFromVersionedId(versionedId);
+            assertCatalogItemsEqual(actual.getCatalogItem(id, version), expected.getCatalogItem(id, version));
         }
     }
 
@@ -251,7 +273,7 @@ public abstract class RebindTestFixture<T extends StartableApplication> {
         return FluentIterable.from(catalogItems)
                 .transform(EntityFunctions.id())
                 .copyInto(Sets.<String>newHashSet());
-    }
+   }
 
     protected void assertCatalogItemsEqual(CatalogItem<?, ?> actual, CatalogItem<?, ?> expected) {
         assertEquals(actual.getClass(), expected.getClass());
@@ -265,11 +287,7 @@ public abstract class RebindTestFixture<T extends StartableApplication> {
         assertEquals(actual.getCatalogItemJavaType(), expected.getCatalogItemJavaType());
         assertEquals(actual.getCatalogItemType(), expected.getCatalogItemType());
         assertEquals(actual.getSpecType(), expected.getSpecType());
-        assertEquals(actual.getRegisteredTypeName(), expected.getRegisteredTypeName());
-        if (actual.getLibraries() != null && expected.getLibraries() != null) {
-            assertEquals(actual.getLibraries().getBundles(), expected.getLibraries().getBundles());
-        } else {
-            assertEquals(actual.getLibraries(), expected.getLibraries());
-        }
+        assertEquals(actual.getSymbolicName(), expected.getSymbolicName());
+        assertEquals(actual.getLibraries(), expected.getLibraries());
     }
 }

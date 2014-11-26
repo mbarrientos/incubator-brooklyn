@@ -87,6 +87,9 @@ import brooklyn.config.ConfigKey;
 import brooklyn.config.ConfigKey.HasConfigKey;
 import brooklyn.config.ConfigUtils;
 import brooklyn.entity.basic.Entities;
+import brooklyn.entity.rebind.persister.LocationWithObjectStore;
+import brooklyn.entity.rebind.persister.PersistenceObjectStore;
+import brooklyn.entity.rebind.persister.jclouds.JcloudsBlobStoreBasedObjectStore;
 import brooklyn.location.LocationSpec;
 import brooklyn.location.MachineLocation;
 import brooklyn.location.MachineManagementMixins.MachineMetadata;
@@ -166,7 +169,7 @@ import com.google.common.primitives.Ints;
  * Configuration flags are defined in {@link JcloudsLocationConfig}.
  */
 @SuppressWarnings("serial")
-public class JcloudsLocation extends AbstractCloudMachineProvisioningLocation implements JcloudsLocationConfig, RichMachineProvisioningLocation<SshMachineLocation> {
+public class JcloudsLocation extends AbstractCloudMachineProvisioningLocation implements JcloudsLocationConfig, RichMachineProvisioningLocation<SshMachineLocation>, LocationWithObjectStore {
 
     // TODO After converting from Groovy to Java, this is now very bad code! It relies entirely on putting 
     // things into and taking them out of maps; it's not type-safe, and it's thus very error-prone.
@@ -266,7 +269,7 @@ public class JcloudsLocation extends AbstractCloudMachineProvisioningLocation im
         if (configDescription!=null && configDescription.startsWith(getClass().getSimpleName()))
             return configDescription;
         return getClass().getSimpleName()+"["+getDisplayName()+":"+(identity != null ? identity : null)+
-                (configDescription!=null ? "/"+configDescription : "") + "]";
+                (configDescription!=null ? "/"+configDescription : "") + "@" + getId() + "]";
     }
 
     @Override
@@ -691,7 +694,7 @@ public class JcloudsLocation extends AbstractCloudMachineProvisioningLocation im
                             ? Splitter.on(",").withKeyValueSeparator(":").split(setupVarsString)
                             : ImmutableMap.<String, String>of();
                     String scriptContent =  ResourceUtils.create(this).getResourceAsString(setupScript);
-                    String script = TemplateProcessor.processTemplateContents(scriptContent, substitutions);
+                    String script = TemplateProcessor.processTemplateContents(scriptContent, getManagementContext(), substitutions);
                     sshMachineLocation.execCommands("Customizing node " + this, ImmutableList.of(script));
                 }
                 
@@ -718,7 +721,19 @@ public class JcloudsLocation extends AbstractCloudMachineProvisioningLocation im
                     
                     List<String> iptablesRules = createIptablesRulesForNetworkInterface((Iterable<Integer>) setup.get(INBOUND_PORTS));
                     iptablesRules.add(IptablesCommands.saveIptablesRules());
-                    sshMachineLocation.execCommands("Inserting iptables rules", iptablesRules);
+                    List<String> batch = Lists.newArrayList();
+                    // Some entities, such as Riak (erlang based) have a huge range of ports, which leads to a script that
+                    // is too large to run (fails with a broken pipe). Batch the rules into batches of 50
+                    for (String rule : iptablesRules) {
+                        batch.add(rule);
+                        if (batch.size() == 50) {
+                            sshMachineLocation.execCommands("Inserting iptables rules, 50 command batch", batch);
+                            batch.clear();
+                        }
+                    }
+                    if (batch.size() > 0) {
+                        sshMachineLocation.execCommands("Inserting iptables rules", batch);
+                    }
                     sshMachineLocation.execCommands("List iptables rules", ImmutableList.of(IptablesCommands.listIptablesRule()));
                 }
                 
@@ -873,6 +888,9 @@ public class JcloudsLocation extends AbstractCloudMachineProvisioningLocation im
                         if (t instanceof EC2TemplateOptions) {
                             if (v==null) return;
                             ((EC2TemplateOptions)t).userData(v.toString().getBytes());
+                            // TODO avail in next jclouds thanks to @andreaturli
+//                          } else if (t instanceof SoftLayerTemplateOptions) {
+//                              ((SoftLayerTemplateOptions)t).userData(Strings.toString(v));
                         } else {
                             LOG.info("ignoring userDataString({}) in VM creation because not supported for cloud/type ({})", v, t.getClass());
                         }
@@ -882,6 +900,9 @@ public class JcloudsLocation extends AbstractCloudMachineProvisioningLocation im
                         if (t instanceof EC2TemplateOptions) {
                             byte[] bytes = toByteArray(v);
                             ((EC2TemplateOptions)t).userData(bytes);
+                          // TODO avail in next jclouds thanks to @andreaturli
+//                        } else if (t instanceof SoftLayerTemplateOptions) {
+//                            ((SoftLayerTemplateOptions)t).userData(Strings.toString(v));
                         } else {
                             LOG.info("ignoring userData({}) in VM creation because not supported for cloud/type ({})", v, t.getClass());
                         }
@@ -2040,4 +2061,10 @@ public class JcloudsLocation extends AbstractCloudMachineProvisioningLocation im
        }
        return iptablesRules;
     }
+    
+    @Override
+    public PersistenceObjectStore newPersistenceObjectStore(String container) {
+        return new JcloudsBlobStoreBasedObjectStore(this, container);
+    }
+    
 }

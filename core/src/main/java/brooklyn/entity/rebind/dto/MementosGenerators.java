@@ -21,6 +21,7 @@ package brooklyn.entity.rebind.dto;
 import static com.google.common.base.Preconditions.checkNotNull;
 
 import java.lang.reflect.Modifier;
+import java.lang.reflect.Proxy;
 import java.util.Map;
 import java.util.Set;
 
@@ -43,6 +44,7 @@ import brooklyn.location.basic.AbstractLocation;
 import brooklyn.location.basic.LocationInternal;
 import brooklyn.management.ManagementContext;
 import brooklyn.management.Task;
+import brooklyn.management.internal.NonDeploymentManagementContext;
 import brooklyn.mementos.BrooklynMemento;
 import brooklyn.mementos.CatalogItemMemento;
 import brooklyn.mementos.EnricherMemento;
@@ -52,6 +54,7 @@ import brooklyn.mementos.LocationMemento;
 import brooklyn.mementos.Memento;
 import brooklyn.mementos.PolicyMemento;
 import brooklyn.policy.Enricher;
+import brooklyn.policy.EntityAdjunct;
 import brooklyn.policy.Policy;
 import brooklyn.policy.basic.AbstractPolicy;
 import brooklyn.util.collections.MutableMap;
@@ -177,7 +180,7 @@ public class MementosGenerators {
         for (Location location : entity.getLocations()) {
             builder.locations.add(location.getId()); 
         }
-        
+
         for (Entity child : entity.getChildren()) {
             builder.children.add(child.getId()); 
         }
@@ -362,26 +365,31 @@ public class MementosGenerators {
         BasicCatalogItemMemento.Builder builder = BasicCatalogItemMemento.builder();
         populateBrooklynObjectMementoBuilder(catalogItem, builder);
         builder.catalogItemJavaType(catalogItem.getCatalogItemJavaType())
-        .catalogItemType(catalogItem.getCatalogItemType())
-        .description(catalogItem.getDescription())
-        .iconUrl(catalogItem.getIconUrl())
-        .javaType(catalogItem.getJavaType())
-        .libraries(catalogItem.getLibraries())
-        .registeredTypeName(catalogItem.getRegisteredTypeName())
-        .specType(catalogItem.getSpecType())
-        .version(catalogItem.getVersion())
-        .planYaml(catalogItem.getPlanYaml())
-        ;
+            .catalogItemType(catalogItem.getCatalogItemType())
+            .description(catalogItem.getDescription())
+            .iconUrl(catalogItem.getIconUrl())
+            .javaType(catalogItem.getJavaType())
+            .libraries(catalogItem.getLibraries())
+            .symbolicName(catalogItem.getSymbolicName())
+            .specType(catalogItem.getSpecType())
+            .version(catalogItem.getVersion())
+            .planYaml(catalogItem.getPlanYaml());
         return builder.build();
     }
     
     private static void populateBrooklynObjectMementoBuilder(BrooklynObject instance, AbstractMemento.Builder<?> builder) {
+        if (Proxy.isProxyClass(instance.getClass())) {
+            throw new IllegalStateException("Attempt to create memento from proxy "+instance+" (would fail with wrong type)");
+        }
+        
         builder.id = instance.getId();
         builder.displayName = instance.getDisplayName();
         builder.catalogItemId = instance.getCatalogItemId();
         builder.type = instance.getClass().getName();
         builder.typeClass = instance.getClass();
-        
+        if (instance instanceof EntityAdjunct) {
+            builder.uniqueTag = ((EntityAdjunct)instance).getUniqueTag();
+        }
         for (Object tag : instance.tags().getTags()) {
             builder.tags.add(tag); 
         }

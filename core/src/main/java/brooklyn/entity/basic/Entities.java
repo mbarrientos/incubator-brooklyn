@@ -742,8 +742,9 @@ public class Entities {
         for (Location loc : mgmt.getLocationManager().getLocations()) {
             destroyCatching(loc);
         }
-        if (mgmt instanceof ManagementContextInternal)
+        if (mgmt instanceof ManagementContextInternal) {
             ((ManagementContextInternal)mgmt).terminate();
+        }
         if (error!=null) throw Exceptions.propagate(error);
     }
 
@@ -773,10 +774,14 @@ public class Entities {
 
     /** Unwraps a proxy to retrieve the real item, if available.
      * <p>
-     * Only intended for use in tests. For normal operations, callers should ensure the method is
-     * available on an interface and accessed via the proxy. */
+     * Only intended for use in tests and occasional internal usage, e.g. persistence.
+     * For normal operations, callers should ensure the method is available on an interface and accessed via the proxy. */
     @Beta @VisibleForTesting
     public static AbstractEntity deproxy(Entity e) {
+        if (!(Proxy.isProxyClass(e.getClass()))) {
+            log.warn("Attempt to deproxy non-proxy "+e, new Throwable("Location of attempt to deproxy non-proxy "+e));
+            return (AbstractEntity) e;
+        }
         return (AbstractEntity) ((EntityProxyImpl)Proxy.getInvocationHandler(e)).getDelegate();
     }
     
@@ -1018,7 +1023,7 @@ public class Entities {
                     .rethrowException().backoffTo(Duration.ONE_SECOND)
                     .until(new Callable<Boolean>() {
                         public Boolean call() {
-                            return entity.getAttribute(Startable.SERVICE_UP);
+                            return Boolean.TRUE.equals(entity.getAttribute(Startable.SERVICE_UP));
                         }})
                     .run()) {
                 throw new IllegalStateException("Timeout waiting for SERVICE_UP from "+entity);

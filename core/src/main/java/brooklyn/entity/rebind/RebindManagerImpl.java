@@ -20,7 +20,6 @@ package brooklyn.entity.rebind;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 
-import java.io.IOException;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -35,14 +34,16 @@ import org.slf4j.LoggerFactory;
 
 import brooklyn.basic.AbstractBrooklynObject;
 import brooklyn.basic.BrooklynObject;
+import brooklyn.basic.BrooklynObjectInternal;
+import brooklyn.catalog.BrooklynCatalog;
 import brooklyn.catalog.CatalogItem;
 import brooklyn.catalog.CatalogLoadMode;
 import brooklyn.catalog.internal.BasicBrooklynCatalog;
 import brooklyn.catalog.internal.CatalogUtils;
 import brooklyn.config.BrooklynLogging;
+import brooklyn.config.BrooklynLogging.LoggingLevel;
 import brooklyn.config.BrooklynServerConfig;
 import brooklyn.config.ConfigKey;
-import brooklyn.config.BrooklynLogging.LoggingLevel;
 import brooklyn.enricher.basic.AbstractEnricher;
 import brooklyn.entity.Application;
 import brooklyn.entity.Entity;
@@ -56,17 +57,21 @@ import brooklyn.entity.proxying.InternalFactory;
 import brooklyn.entity.proxying.InternalLocationFactory;
 import brooklyn.entity.proxying.InternalPolicyFactory;
 import brooklyn.entity.rebind.persister.BrooklynMementoPersisterToObjectStore;
+import brooklyn.entity.rebind.persister.BrooklynPersistenceUtils;
+import brooklyn.entity.rebind.persister.BrooklynPersistenceUtils.CreateBackupMode;
+import brooklyn.entity.rebind.persister.PersistenceActivityMetrics;
 import brooklyn.event.feed.AbstractFeed;
 import brooklyn.internal.BrooklynFeatureEnablement;
 import brooklyn.location.Location;
 import brooklyn.location.basic.AbstractLocation;
 import brooklyn.location.basic.LocationInternal;
 import brooklyn.management.ExecutionContext;
+import brooklyn.management.ManagementContext;
 import brooklyn.management.Task;
 import brooklyn.management.classloading.BrooklynClassLoadingContext;
-import brooklyn.management.classloading.JavaBrooklynClassLoadingContext;
 import brooklyn.management.ha.HighAvailabilityManagerImpl;
 import brooklyn.management.ha.ManagementNodeState;
+import brooklyn.management.ha.MementoCopyMode;
 import brooklyn.management.internal.EntityManagerInternal;
 import brooklyn.management.internal.LocationManagerInternal;
 import brooklyn.management.internal.ManagementContextInternal;
@@ -82,15 +87,20 @@ import brooklyn.mementos.EnricherMemento;
 import brooklyn.mementos.EntityMemento;
 import brooklyn.mementos.FeedMemento;
 import brooklyn.mementos.LocationMemento;
+import brooklyn.mementos.Memento;
 import brooklyn.mementos.PolicyMemento;
 import brooklyn.mementos.TreeNode;
 import brooklyn.policy.Enricher;
 import brooklyn.policy.Policy;
 import brooklyn.policy.basic.AbstractPolicy;
+import brooklyn.util.collections.MutableList;
 import brooklyn.util.collections.MutableMap;
+import brooklyn.util.collections.QuorumCheck;
+import brooklyn.util.collections.QuorumCheck.QuorumChecks;
 import brooklyn.util.exceptions.Exceptions;
 import brooklyn.util.exceptions.RuntimeInterruptedException;
 import brooklyn.util.flags.FlagUtils;
+import brooklyn.util.guava.Maybe;
 import brooklyn.util.javalang.Reflections;
 import brooklyn.util.task.BasicExecutionContext;
 import brooklyn.util.task.ScheduledTask;
@@ -105,6 +115,7 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Optional;
 import com.google.common.base.Stopwatch;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
@@ -132,7 +143,15 @@ public class RebindManagerImpl implements RebindManager {
     public static final ConfigKey<RebindFailureMode> LOAD_POLICY_FAILURE_MODE =
             ConfigKeys.newConfigKey(RebindFailureMode.class, "rebind.failureMode.loadPolicy",
                     "Action to take if a failure occurs when loading a policy or enricher", RebindFailureMode.CONTINUE);
-    
+
+    public static final ConfigKey<QuorumCheck> DANGLING_REFERENCES_MIN_REQUIRED_HEALTHY =
+        ConfigKeys.newConfigKey(QuorumCheck.class, "rebind.failureMode.danglingRefs.minRequiredHealthy",
+                "Number of items which must be rebinded at various sizes; "
+                + "a small number of dangling references is possible if items are in the process of being created or deleted, "
+                + "and that should be resolved on retry; the default set here allows max 2 dangling up to 10 items, "
+                + "then linear regression to allow max 5% at 100 items and above", 
+                QuorumChecks.newLinearRange("[[0,-2],[10,8],[100,95],[200,190]]"));
+
     public static final Logger LOG = LoggerFactory.getLogger(RebindManagerImpl.class);
 
     private final ManagementContextInternal managementContext;
@@ -159,7 +178,13 @@ public class RebindManagerImpl implements RebindManager {
     private RebindFailureMode rebindFailureMode;
     private RebindFailureMode addPolicyFailureMode;
     private RebindFailureMode loadPolicyFailureMode;
+    private QuorumCheck danglingRefsQuorumRequiredHealthy;
+    
+    private PersistenceActivityMetrics rebindMetrics = new PersistenceActivityMetrics();
+    private PersistenceActivityMetrics persistMetrics = new PersistenceActivityMetrics();
 
+    Integer firstRebindAppCount, firstRebindEntityCount, firstRebindItemCount;
+    
     /**
      * For tracking if rebinding, for {@link AbstractEnricher#isRebinding()} etc.
      *  
@@ -197,6 +222,8 @@ public class RebindManagerImpl implements RebindManager {
         rebindFailureMode = managementContext.getConfig().getConfig(REBIND_FAILURE_MODE);
         addPolicyFailureMode = managementContext.getConfig().getConfig(ADD_POLICY_FAILURE_MODE);
         loadPolicyFailureMode = managementContext.getConfig().getConfig(LOAD_POLICY_FAILURE_MODE);
+        
+        danglingRefsQuorumRequiredHealthy = managementContext.getConfig().getConfig(DANGLING_REFERENCES_MIN_REQUIRED_HEALTHY);
 
         LOG.debug("{} initialized, settings: policies={}, enrichers={}, feeds={}, catalog={}",
                 new Object[]{this, persistPoliciesEnabled, persistEnrichersEnabled, persistFeedsEnabled, persistCatalogItemsEnabled});
@@ -239,7 +266,7 @@ public class RebindManagerImpl implements RebindManager {
         }
         this.persistenceStoreAccess = checkNotNull(val, "persister");
         
-        this.persistenceRealChangeListener = new PeriodicDeltaChangeListener(managementContext.getServerExecutionContext(), persistenceStoreAccess, exceptionHandler, periodicPersistPeriod);
+        this.persistenceRealChangeListener = new PeriodicDeltaChangeListener(managementContext.getServerExecutionContext(), persistenceStoreAccess, exceptionHandler, persistMetrics, periodicPersistPeriod);
         this.persistencePublicChangeListener = new SafeChangeListener(persistenceRealChangeListener);
         
         if (persistenceRunning) {
@@ -259,12 +286,17 @@ public class RebindManagerImpl implements RebindManager {
             throw new IllegalStateException("Cannot start read-only when already running with persistence");
         }
         LOG.debug("Starting persistence ("+this+"), mgmt "+managementContext.getManagementNodeId());
+        if (!persistenceRunning) {
+            if (managementContext.getBrooklynProperties().getConfig(BrooklynServerConfig.PERSISTENCE_BACKUPS_REQUIRED_ON_PROMOTION)) {
+                BrooklynPersistenceUtils.createBackup(managementContext, CreateBackupMode.PROMOTION, MementoCopyMode.REMOTE);
+            }
+        }
         persistenceRunning = true;
         readOnlyRebindCount = Integer.MIN_VALUE;
         persistenceStoreAccess.enableWriteAccess();
         if (persistenceRealChangeListener != null) persistenceRealChangeListener.start();
     }
-    
+
     @Override
     public void stopPersistence() {
         LOG.debug("Stopping persistence ("+this+"), mgmt "+managementContext.getManagementNodeId());
@@ -276,7 +308,11 @@ public class RebindManagerImpl implements RebindManager {
     
     @SuppressWarnings("unchecked")
     @Override
-    public void startReadOnly() {
+    public void startReadOnly(final ManagementNodeState mode) {
+        if (!ManagementNodeState.isHotProxy(mode)) {
+            throw new IllegalStateException("Read-only rebind thread only permitted for hot proxy modes; not "+mode);
+        }
+        
         if (persistenceRunning) {
             throw new IllegalStateException("Cannot start read-only when already running with persistence");
         }
@@ -293,9 +329,9 @@ public class RebindManagerImpl implements RebindManager {
         readOnlyRebindCount = 0;
 
         try {
-            rebind(null, null, ManagementNodeState.HOT_STANDBY);
+            rebind(null, null, mode);
         } catch (Exception e) {
-            Exceptions.propagate(e);
+            throw Exceptions.propagate(e);
         }
         
         Callable<Task<?>> taskFactory = new Callable<Task<?>>() {
@@ -303,8 +339,7 @@ public class RebindManagerImpl implements RebindManager {
                 return Tasks.<Void>builder().dynamic(false).name("rebind (periodic run").body(new Callable<Void>() {
                     public Void call() {
                         try {
-                            rebind(null, null, ManagementNodeState.HOT_STANDBY);
-                            readOnlyRebindCount++;
+                            rebind(null, null, mode);
                             return null;
                         } catch (RuntimeInterruptedException e) {
                             LOG.debug("Interrupted rebinding (re-interrupting): "+e);
@@ -354,8 +389,8 @@ public class RebindManagerImpl implements RebindManager {
     @Override
     public void start() {
         ManagementNodeState target = getRebindMode();
-        if (target==ManagementNodeState.HOT_STANDBY) {
-            startReadOnly();
+        if (target==ManagementNodeState.HOT_STANDBY || target==ManagementNodeState.HOT_BACKUP) {
+            startReadOnly(target);
         } else if (target==ManagementNodeState.MASTER) {
             startPersistence();
         } else {
@@ -394,7 +429,20 @@ public class RebindManagerImpl implements RebindManager {
     @Override
     @VisibleForTesting
     public void forcePersistNow() {
-        persistenceRealChangeListener.persistNow();
+        forcePersistNow(false, null);
+    }
+    @Override
+    @VisibleForTesting
+    public void forcePersistNow(boolean full, PersistenceExceptionHandler exceptionHandler) {
+        if (full) {
+            BrooklynMementoRawData memento = BrooklynPersistenceUtils.newStateMemento(managementContext, MementoCopyMode.LOCAL);
+            if (exceptionHandler==null) {
+                exceptionHandler = persistenceRealChangeListener.getExceptionHandler();
+            }
+            persistenceStoreAccess.checkpoint(memento, exceptionHandler);
+        } else {
+            persistenceRealChangeListener.persistNow();
+        }
     }
     
     @Override
@@ -424,14 +472,15 @@ public class RebindManagerImpl implements RebindManager {
         final RebindExceptionHandler exceptionHandler = exceptionHandlerO!=null ? exceptionHandlerO :
             RebindExceptionHandlerImpl.builder()
                 .danglingRefFailureMode(danglingRefFailureMode)
+                .danglingRefQuorumRequiredHealthy(danglingRefsQuorumRequiredHealthy)
                 .rebindFailureMode(rebindFailureMode)
                 .addPolicyFailureMode(addPolicyFailureMode)
                 .loadPolicyFailureMode(loadPolicyFailureMode)
                 .build();
         final ManagementNodeState mode = modeO!=null ? modeO : getRebindMode();
         
-        if (mode!=ManagementNodeState.HOT_STANDBY && mode!=ManagementNodeState.MASTER)
-            throw new IllegalStateException("Must be either master or read only to rebind (mode "+mode+")");
+        if (mode!=ManagementNodeState.MASTER && mode!=ManagementNodeState.HOT_STANDBY && mode!=ManagementNodeState.HOT_BACKUP)
+            throw new IllegalStateException("Must be either master or hot standby/backup to rebind (mode "+mode+")");
 
         ExecutionContext ec = BasicExecutionContext.getCurrentExecutionContext();
         if (ec == null) {
@@ -451,7 +500,7 @@ public class RebindManagerImpl implements RebindManager {
     }
     
     @Override
-    public BrooklynMementoRawData retrieveMementoRawData() throws IOException {
+    public BrooklynMementoRawData retrieveMementoRawData() {
         RebindExceptionHandler exceptionHandler = RebindExceptionHandlerImpl.builder()
                 .danglingRefFailureMode(danglingRefFailureMode)
                 .rebindFailureMode(rebindFailureMode)
@@ -467,8 +516,11 @@ public class RebindManagerImpl implements RebindManager {
      * 
      * In so doing, it instantiates the entities + locations, registering them with the rebindContext.
      */
-    protected BrooklynMementoRawData loadMementoRawData(final RebindExceptionHandler exceptionHandler) throws IOException {
+    protected BrooklynMementoRawData loadMementoRawData(final RebindExceptionHandler exceptionHandler) {
         try {
+            if (persistenceStoreAccess==null) {
+                throw new IllegalStateException("Persistence not configured; cannot load memento data from persistent backing store");
+            }
             if (!(persistenceStoreAccess instanceof BrooklynMementoPersisterToObjectStore)) {
                 throw new IllegalStateException("Cannot load raw memento with persister "+persistenceStoreAccess);
             }
@@ -487,19 +539,24 @@ public class RebindManagerImpl implements RebindManager {
             rebindActive.acquire();
         } catch (InterruptedException e1) { Exceptions.propagate(e1); }
         RebindTracker.setRebinding();
+        if (ManagementNodeState.isHotProxy(mode))
+            readOnlyRebindCount++;
+
+        Stopwatch timer = Stopwatch.createStarted();
         try {
-            Stopwatch timer = Stopwatch.createStarted();
-            exceptionHandler.onStart();
-            
             Reflections reflections = new Reflections(classLoader);
             RebindContextImpl rebindContext = new RebindContextImpl(exceptionHandler, classLoader);
-            if (mode==ManagementNodeState.HOT_STANDBY) {
+            
+            exceptionHandler.onStart(rebindContext);
+            
+            if (mode==ManagementNodeState.HOT_STANDBY || mode==ManagementNodeState.HOT_BACKUP) {
                 rebindContext.setAllReadOnly();
             } else {
                 Preconditions.checkState(mode==ManagementNodeState.MASTER, "Must be either master or read only to rebind (mode "+mode+")");
             }
             
             LookupContext realLookupContext = new RebindContextLookupContext(managementContext, rebindContext, exceptionHandler);
+            rebindContext.setLookupContext(realLookupContext);
             
             // Mutli-phase deserialization.
             //
@@ -508,7 +565,7 @@ public class RebindManagerImpl implements RebindManager {
             //  3. instantiate entities+locations so that inter-entity references can subsequently be set during deserialize (and entity config/state is set).
             //  4. deserialize the memento
             //  5. instantiate policies+enricherss+feeds (could perhaps merge this with (3), depending how they are implemented)
-            //  6. reconstruct the entities etc (i.e. calling init on the already-instantiated instances).
+            //  6. reconstruct the entities etc (i.e. calling rebind() on the already-instantiated instances)
             //  7. add policies+enrichers+feeds to all the entities.
             //  8. manage the entities
             
@@ -548,18 +605,32 @@ public class RebindManagerImpl implements RebindManager {
             BrooklynMementoRawData mementoRawData = persistenceStoreAccess.loadMementoRawData(exceptionHandler);
             BrooklynMementoManifest mementoManifest = persistenceStoreAccess.loadMementoManifest(mementoRawData, exceptionHandler);
 
+            boolean overwritingMaster = false;
             boolean isEmpty = mementoManifest.isEmpty();
-            if (mode!=ManagementNodeState.HOT_STANDBY) {
+            if (mode!=ManagementNodeState.HOT_STANDBY && mode!=ManagementNodeState.HOT_BACKUP) {
                 if (!isEmpty) { 
-                    LOG.info("Rebinding from "+getPersister().getBackingStoreDescription()+"...");
+                    LOG.info("Rebinding from "+getPersister().getBackingStoreDescription()+" for "+Strings.toLowerCase(Strings.toString(mode))+" "+managementContext.getManagementNodeId()+"...");
                 } else {
                     LOG.info("Rebind check: no existing state; will persist new items to "+getPersister().getBackingStoreDescription());
+                }
+                
+                if (!managementContext.getEntityManager().getEntities().isEmpty() || !managementContext.getLocationManager().getLocations().isEmpty()) {
+                    // this is discouraged if we were already master
+                    Entity anEntity = Iterables.getFirst(managementContext.getEntityManager().getEntities(), null);
+                    if (anEntity!=null && !((EntityInternal)anEntity).getManagementSupport().isReadOnly()) {
+                        overwritingMaster = true;
+                        LOG.warn("Rebind requested for "+mode+" node "+managementContext.getManagementNodeId()+" "
+                            + "when it already has active state; discouraged, "
+                            + "will likely overwrite: "+managementContext.getEntityManager().getEntities()+" and "+managementContext.getLocationManager().getLocations()+" and more");
+                    }
                 }
             }
 
             //
-            // PHASE TWO
+            // PHASE TWO - build catalog so we can load other things
             //
+            
+            BrooklynObjectInstantiator instantiator = new BrooklynObjectInstantiator(classLoader, rebindContext, reflections);
             
             // Instantiate catalog items
             if (persistCatalogItemsEnabled) {
@@ -567,7 +638,7 @@ public class RebindManagerImpl implements RebindManager {
                 for (CatalogItemMemento catalogItemMemento : mementoManifest.getCatalogItemMementos().values()) {
                     if (LOG.isDebugEnabled()) LOG.debug("RebindManager instantiating catalog item {}", catalogItemMemento);
                     try {
-                        CatalogItem<?, ?> catalogItem = newCatalogItem(catalogItemMemento, reflections);
+                        CatalogItem<?, ?> catalogItem = instantiator.newCatalogItem(catalogItemMemento);
                         rebindContext.registerCatalogItem(catalogItemMemento.getId(), catalogItem);
                     } catch (Exception e) {
                         exceptionHandler.onCreateFailed(BrooklynObjectType.CATALOG_ITEM, catalogItemMemento.getId(), catalogItemMemento.getType(), e);
@@ -643,7 +714,7 @@ public class RebindManagerImpl implements RebindManager {
                 if (LOG.isTraceEnabled()) LOG.trace("RebindManager instantiating location {}", locId);
                 
                 try {
-                    Location location = newLocation(locId, locType, reflections);
+                    Location location = instantiator.newLocation(locId, locType);
                     rebindContext.registerLocation(locId, location);
                 } catch (Exception e) {
                     exceptionHandler.onCreateFailed(BrooklynObjectType.LOCATION, locId, locType, e);
@@ -655,14 +726,15 @@ public class RebindManagerImpl implements RebindManager {
             for (Map.Entry<String, EntityMementoManifest> entry : mementoManifest.getEntityIdToManifest().entrySet()) {
                 String entityId = entry.getKey();
                 EntityMementoManifest entityManifest = entry.getValue();
-                String catalogItemId = findCatalogItemId(mementoManifest.getEntityIdToManifest(), entityManifest);
+                String catalogItemId = findCatalogItemId(classLoader, mementoManifest.getEntityIdToManifest(), entityManifest);
+                
                 if (LOG.isTraceEnabled()) LOG.trace("RebindManager instantiating entity {}", entityId);
                 
                 try {
-                    Entity entity = newEntity(entityId, entityManifest.getType(), getLoadingContextFromCatalogItemId(catalogItemId, classLoader, rebindContext));
+                    Entity entity = (Entity) instantiator.newEntity(entityId, entityManifest.getType(), catalogItemId);
                     ((EntityInternal)entity).getManagementSupport().setReadOnly( rebindContext.isReadOnly(entity) );
                     rebindContext.registerEntity(entityId, entity);
-                    
+
                 } catch (Exception e) {
                     exceptionHandler.onCreateFailed(BrooklynObjectType.ENTITY, entityId, entityManifest.getType(), e);
                 }
@@ -687,7 +759,7 @@ public class RebindManagerImpl implements RebindManager {
                     logRebindingDebug("RebindManager instantiating policy {}", policyMemento);
                     
                     try {
-                        Policy policy = newPolicy(policyMemento, getLoadingContextFromCatalogItemId(policyMemento.getCatalogItemId(), classLoader, rebindContext));
+                        Policy policy = instantiator.newPolicy(policyMemento);
                         rebindContext.registerPolicy(policyMemento.getId(), policy);
                     } catch (Exception e) {
                         exceptionHandler.onCreateFailed(BrooklynObjectType.POLICY, policyMemento.getId(), policyMemento.getType(), e);
@@ -704,7 +776,7 @@ public class RebindManagerImpl implements RebindManager {
                     logRebindingDebug("RebindManager instantiating enricher {}", enricherMemento);
 
                     try {
-                        Enricher enricher = newEnricher(enricherMemento, reflections);
+                        Enricher enricher = instantiator.newEnricher(enricherMemento);
                         rebindContext.registerEnricher(enricherMemento.getId(), enricher);
                     } catch (Exception e) {
                         exceptionHandler.onCreateFailed(BrooklynObjectType.ENRICHER, enricherMemento.getId(), enricherMemento.getType(), e);
@@ -721,7 +793,7 @@ public class RebindManagerImpl implements RebindManager {
                     if (LOG.isDebugEnabled()) LOG.debug("RebindManager instantiating feed {}", feedMemento);
 
                     try {
-                        Feed feed = newFeed(feedMemento, reflections);
+                        Feed feed = instantiator.newFeed(feedMemento);
                         rebindContext.registerFeed(feedMemento.getId(), feed);
                     } catch (Exception e) {
                         exceptionHandler.onCreateFailed(BrooklynObjectType.FEED, feedMemento.getId(), feedMemento.getType(), e);
@@ -819,7 +891,7 @@ public class RebindManagerImpl implements RebindManager {
             // Reconstruct entities
             logRebindingDebug("RebindManager reconstructing entities");
             for (EntityMemento entityMemento : sortParentFirst(memento.getEntityMementos()).values()) {
-                Entity entity = rebindContext.getEntity(entityMemento.getId());
+                Entity entity = rebindContext.lookup().lookupEntity(entityMemento.getId());
                 logRebindingDebug("RebindManager reconstructing entity {}", entityMemento);
     
                 if (entity == null) {
@@ -872,7 +944,7 @@ public class RebindManagerImpl implements RebindManager {
             Set<String> oldLocations = Sets.newLinkedHashSet(locationManager.getLocationIds());
             for (Location location: rebindContext.getLocations()) {
                 ManagementTransitionMode oldMode = locationManager.getLastManagementTransitionMode(location.getId());
-                locationManager.setManagementTransitionMode(location, computeMode(location, oldMode, rebindContext.isReadOnly(location)) );
+                locationManager.setManagementTransitionMode(location, computeMode(managementContext, location, oldMode, rebindContext.isReadOnly(location)) );
                 if (oldMode!=null)
                     oldLocations.remove(location.getId());
             }
@@ -887,6 +959,8 @@ public class RebindManagerImpl implements RebindManager {
                 }
             }
             // destroy old
+            if (!oldLocations.isEmpty()) BrooklynLogging.log(LOG, overwritingMaster ? BrooklynLogging.LoggingLevel.WARN : BrooklynLogging.LoggingLevel.DEBUG, 
+                "Destroying unused locations on rebind: "+oldLocations);
             for (String oldLocationId: oldLocations) {
                locationManager.unmanage(locationManager.getLocation(oldLocationId), ManagementTransitionMode.REBINDING_DESTROYED); 
             }
@@ -897,7 +971,7 @@ public class RebindManagerImpl implements RebindManager {
             Set<String> oldEntities = Sets.newLinkedHashSet(entityManager.getEntityIds());
             for (Entity entity: rebindContext.getEntities()) {
                 ManagementTransitionMode oldMode = entityManager.getLastManagementTransitionMode(entity.getId());
-                entityManager.setManagementTransitionMode(entity, computeMode(entity, oldMode, rebindContext.isReadOnly(entity)) );
+                entityManager.setManagementTransitionMode(entity, computeMode(managementContext,entity, oldMode, rebindContext.isReadOnly(entity)) );
                 if (oldMode!=null)
                     oldEntities.remove(entity.getId());
             }
@@ -917,11 +991,21 @@ public class RebindManagerImpl implements RebindManager {
                 }
             }
             // destroy old
+            if (!oldLocations.isEmpty()) BrooklynLogging.log(LOG, overwritingMaster ? BrooklynLogging.LoggingLevel.WARN : BrooklynLogging.LoggingLevel.DEBUG, 
+                "Destroying unused entities on rebind: "+oldEntities);
             for (String oldEntityId: oldEntities) {
                entityManager.unmanage(entityManager.getEntity(oldEntityId), ManagementTransitionMode.REBINDING_DESTROYED); 
             }
 
             exceptionHandler.onDone();
+            
+            rebindMetrics.noteSuccess(Duration.of(timer));
+            noteErrors(exceptionHandler, null);
+            if (firstRebindAppCount==null) {
+                firstRebindAppCount = apps.size();
+                firstRebindEntityCount = rebindContext.getEntities().size();
+                firstRebindItemCount = rebindContext.getAllBrooklynObjects().size();
+            }
 
             if (!isEmpty) {
                 BrooklynLogging.log(LOG, shouldLogRebinding() ? LoggingLevel.INFO : LoggingLevel.DEBUG, 
@@ -942,46 +1026,110 @@ public class RebindManagerImpl implements RebindManager {
             return apps;
 
         } catch (Exception e) {
+            rebindMetrics.noteFailure(Duration.of(timer));
+            
+            Exceptions.propagateIfFatal(e);
+            noteErrors(exceptionHandler, e);
             throw exceptionHandler.onFailed(e);
+            
         } finally {
             rebindActive.release();
             RebindTracker.reset();
         }
     }
+
+    private void noteErrors(final RebindExceptionHandler exceptionHandler, Exception primaryException) {
+        List<Exception> exceptions = exceptionHandler.getExceptions();
+        List<String> warnings = exceptionHandler.getWarnings();
+        if (primaryException!=null || !exceptions.isEmpty() || !warnings.isEmpty()) {
+            List<String> messages = MutableList.<String>of();
+            if (primaryException!=null) messages.add(primaryException.toString());
+            for (Exception e: exceptions) messages.add(e.toString());
+            for (String w: warnings) messages.add(w);
+            rebindMetrics.noteError(messages);
+        }
+    }
     
-    private String findCatalogItemId(Map<String, EntityMementoManifest> entityIdToManifest, EntityMementoManifest entityManifest) {
-        EntityMementoManifest ptr = entityManifest;
-        while (ptr != null) {
-            if (ptr.getCatalogItemId() != null) {
-                return ptr.getCatalogItemId();
+    private String findCatalogItemId(ClassLoader cl, Map<String, EntityMementoManifest> entityIdToManifest, EntityMementoManifest entityManifest) {
+        if (entityManifest.getCatalogItemId() != null) {
+            return entityManifest.getCatalogItemId();
+        }
+
+        if (BrooklynFeatureEnablement.isEnabled(BrooklynFeatureEnablement.FEATURE_INFER_CATALOG_ITEM_ON_REBIND)) {
+            //First check if any of the parent entities has a catalogItemId set.
+            EntityMementoManifest ptr = entityManifest;
+            while (ptr != null) {
+                if (ptr.getCatalogItemId() != null) {
+                    CatalogItem<?, ?> catalogItem = CatalogUtils.getCatalogItemOptionalVersion(managementContext, ptr.getCatalogItemId());
+                    if (catalogItem != null) {
+                        return catalogItem.getId();
+                    } else {
+                        //Couldn't find a catalog item with this id, but return it anyway and
+                        //let the caller deal with the error.
+                        return ptr.getCatalogItemId();
+                    }
+                }
+                if (ptr.getParent() != null) {
+                    ptr = entityIdToManifest.get(ptr.getParent());
+                } else {
+                    ptr = null;
+                }
             }
-            if (ptr.getParent() != null) {
-                ptr = entityIdToManifest.get(ptr.getParent());
-            } else {
-                ptr = null;
+
+            //If no parent entity has the catalogItemId set try to match them by the type we are trying to load.
+            //The current convention is to set catalog item IDs to the java type (for both plain java or CAMP plan) they represent.
+            //This will be applicable only the first time the store is rebinded, while the catalog items don't have the default
+            //version appended to their IDs, but then we will have catalogItemId set on entities so not neede further anyways.
+            BrooklynCatalog catalog = managementContext.getCatalog();
+            ptr = entityManifest;
+            while (ptr != null) {
+                CatalogItem<?, ?> catalogItem = catalog.getCatalogItem(ptr.getType(), BrooklynCatalog.DEFAULT_VERSION);
+                if (catalogItem != null) {
+                    LOG.debug("Inferred catalog item ID "+catalogItem.getId()+" for "+entityManifest+" from ancestor "+ptr);
+                    return catalogItem.getId();
+                }
+                if (ptr.getParent() != null) {
+                    ptr = entityIdToManifest.get(ptr.getParent());
+                } else {
+                    ptr = null;
+                }
+            }
+
+            //As a last resort go through all catalog items trying to load the type and use the first that succeeds.
+            //But first check if can be loaded from the default classpath
+            try {
+                cl.loadClass(entityManifest.getType());
+                return null;
+            } catch (ClassNotFoundException e) {
+            }
+
+            for (CatalogItem<?, ?> item : catalog.getCatalogItems()) {
+                BrooklynClassLoadingContext loader = CatalogUtils.newClassLoadingContext(managementContext, item);
+                boolean canLoadClass = loader.tryLoadClass(entityManifest.getType()).isPresent();
+                if (canLoadClass) {
+                    LOG.warn("Missing catalog item for "+entityManifest.getId()+", inferring as "+item.getId()+" because that is able to load the item");
+                    return item.getId();
+                }
             }
         }
         return null;
     }
 
     private BrooklynClassLoadingContext getLoadingContextFromCatalogItemId(String catalogItemId, ClassLoader classLoader, RebindContext rebindContext) {
-        if (catalogItemId != null) {
-            CatalogItem<?, ?> catalogItem = rebindContext.getCatalogItem(catalogItemId);
-            if (catalogItem != null) {
-                return CatalogUtils.newClassLoadingContext(managementContext, catalogItem);
-            } else {
-                throw new IllegalStateException("Failed to load catalog item " + catalogItemId + " required for rebinding.");
-            }
+        Preconditions.checkNotNull(catalogItemId, "catalogItemId required (should not be null)");
+        CatalogItem<?, ?> catalogItem = rebindContext.lookup().lookupCatalogItem(catalogItemId);
+        if (catalogItem != null) {
+            return CatalogUtils.newClassLoadingContext(managementContext, catalogItem);
         } else {
-            return JavaBrooklynClassLoadingContext.create(managementContext, classLoader);
+            throw new IllegalStateException("Failed to load catalog item " + catalogItemId + " required for rebinding.");
         }
     }
 
-    static ManagementTransitionMode computeMode(BrooklynObject item, ManagementTransitionMode oldMode, boolean isNowReadOnly) {
-        return computeMode(item, oldMode==null ? null : oldMode.wasReadOnly(), isNowReadOnly);
+    static ManagementTransitionMode computeMode(ManagementContext mgmt, BrooklynObject item, ManagementTransitionMode oldMode, boolean isNowReadOnly) {
+        return computeMode(mgmt, item, oldMode==null ? null : oldMode.wasReadOnly(), isNowReadOnly);
     }
 
-    static ManagementTransitionMode computeMode(BrooklynObject item, Boolean wasReadOnly, boolean isNowReadOnly) {
+    static ManagementTransitionMode computeMode(ManagementContext mgmt, BrooklynObject item, Boolean wasReadOnly, boolean isNowReadOnly) {
         if (wasReadOnly==null) {
             // not known
             if (Boolean.TRUE.equals(isNowReadOnly)) return ManagementTransitionMode.REBINDING_READONLY;
@@ -994,7 +1142,8 @@ public class RebindManagerImpl implements RebindManager {
             else if (isNowReadOnly)
                 return ManagementTransitionMode.REBINDING_NO_LONGER_PRIMARY;
             else {
-                LOG.warn("Transitioning to master, though never stopped being a master - " + item);
+                // for the most part we handle this correctly, although there may be leaks; see HighAvailabilityManagerInMemoryTest.testLocationsStillManagedCorrectlyAfterDoublePromotion
+                LOG.warn("Node "+(mgmt!=null ? mgmt.getManagementNodeId() : null)+" rebinding as master when already master (discouraged, may have stale references); for: "+item);
                 return ManagementTransitionMode.REBINDING_BECOMING_PRIMARY;
             }
         }
@@ -1027,184 +1176,243 @@ public class RebindManagerImpl implements RebindManager {
         return result;
     }
 
-    private Entity newEntity(String entityId, String entityType, BrooklynClassLoadingContext loader) {
-        Class<? extends Entity> entityClazz = loader.loadClass(entityType, Entity.class);
+    private class BrooklynObjectInstantiator {
+
+        private final ClassLoader classLoader;
+        private final RebindContextImpl rebindContext;
+        private final Reflections reflections;
         
-        if (InternalFactory.isNewStyle(entityClazz)) {
-            // Not using entityManager.createEntity(EntitySpec) because don't want init() to be called.
-            // Creates an uninitialized entity, but that has correct id + proxy.
-            InternalEntityFactory entityFactory = managementContext.getEntityFactory();
-            Entity entity = entityFactory.constructEntity(entityClazz, Reflections.getAllInterfaces(entityClazz), entityId);
-            
-            return entity;
-
-        } else {
-            LOG.warn("Deprecated rebind of entity without no-arg constructor; this may not be supported in future versions: id="+entityId+"; type="+entityType);
-            
-            // There are several possibilities for the constructor; find one that works.
-            // Prefer passing in the flags because required for Application to set the management context
-            // TODO Feels very hacky!
-
-            Map<Object,Object> flags = Maps.newLinkedHashMap();
-            flags.put("id", entityId);
-            if (AbstractApplication.class.isAssignableFrom(entityClazz)) flags.put("mgmt", managementContext);
-
-            // TODO document the multiple sources of flags, and the reason for setting the mgmt context *and* supplying it as the flag
-            // (NB: merge reported conflict as the two things were added separately)
-            Entity entity = (Entity) invokeConstructor(null, entityClazz, new Object[] {flags}, new Object[] {flags, null}, new Object[] {null}, new Object[0]);
-            
-            // In case the constructor didn't take the Map arg, then also set it here.
-            // e.g. for top-level app instances such as WebClusterDatabaseExampleApp will (often?) not have
-            // interface + constructor.
-            // TODO On serializing the memento, we should capture which interfaces so can recreate
-            // the proxy+spec (including for apps where there's not an obvious interface).
-            FlagUtils.setFieldsFromFlags(ImmutableMap.of("id", entityId), entity);
-            if (entity instanceof AbstractApplication) {
-                FlagUtils.setFieldsFromFlags(ImmutableMap.of("mgmt", managementContext), entity);
-            }
-            ((AbstractEntity)entity).setManagementContext(managementContext);
-            managementContext.prePreManage(entity);
-            
-            return entity;
+        private BrooklynObjectInstantiator(ClassLoader classLoader, RebindContextImpl rebindContext, Reflections reflections) {
+            this.classLoader = classLoader;
+            this.rebindContext = rebindContext;
+            this.reflections = reflections;
         }
-    }
-    
-    /**
-     * Constructs a new location, passing to its constructor the location id and all of memento.getFlags().
-     */
-    private Location newLocation(String locationId, String locationType, Reflections reflections) {
-        Class<? extends Location> locationClazz = reflections.loadClass(locationType, Location.class);
 
-        if (InternalFactory.isNewStyle(locationClazz)) {
-            // Not using loationManager.createLocation(LocationSpec) because don't want init() to be called
-            // TODO Need to rationalise this to move code into methods of InternalLocationFactory.
-            //      But note that we'll change all locations to be entities at some point!
-            // See same code approach used in #newEntity(EntityMemento, Reflections)
-            InternalLocationFactory locationFactory = managementContext.getLocationFactory();
-            Location location = locationFactory.constructLocation(locationClazz);
-            FlagUtils.setFieldsFromFlags(ImmutableMap.of("id", locationId), location);
-            managementContext.prePreManage(location);
-            ((AbstractLocation)location).setManagementContext(managementContext);
+        private Entity newEntity(String entityId, String entityType, String catalogItemId) {
+            Class<? extends Entity> entityClazz = load(Entity.class, entityType, catalogItemId, entityId);
+
+            Entity entity;
             
-            return location;
-        } else {
-            LOG.warn("Deprecated rebind of location without no-arg constructor; this may not be supported in future versions: id="+locationId+"; type="+locationType);
-            
-            // There are several possibilities for the constructor; find one that works.
-            // Prefer passing in the flags because required for Application to set the management context
-            // TODO Feels very hacky!
-            Map<String,?> flags = MutableMap.of("id", locationId, "deferConstructionChecks", true);
+            if (InternalFactory.isNewStyle(entityClazz)) {
+                // Not using entityManager.createEntity(EntitySpec) because don't want init() to be called.
+                // Creates an uninitialized entity, but that has correct id + proxy.
+                InternalEntityFactory entityFactory = managementContext.getEntityFactory();
+                entity = entityFactory.constructEntity(entityClazz, Reflections.getAllInterfaces(entityClazz), entityId);
 
-            return (Location) invokeConstructor(reflections, locationClazz, new Object[] {flags});
-        }
-        // note 'used' config keys get marked in BasicLocationRebindSupport
-    }
+            } else {
+                LOG.warn("Deprecated rebind of entity without no-arg constructor; this may not be supported in future versions: id="+entityId+"; type="+entityType);
 
-    /**
-     * Constructs a new policy, passing to its constructor the policy id and all of memento.getConfig().
-     */
-    private Policy newPolicy(PolicyMemento memento, BrooklynClassLoadingContext loader) {
-        String id = memento.getId();
-        String policyType = checkNotNull(memento.getType(), "policy type of %s must not be null in memento", id);
-        Class<? extends Policy> policyClazz = loader.loadClass(policyType, Policy.class);
+                // There are several possibilities for the constructor; find one that works.
+                // Prefer passing in the flags because required for Application to set the management context
+                // TODO Feels very hacky!
 
-        if (InternalFactory.isNewStyle(policyClazz)) {
-            InternalPolicyFactory policyFactory = managementContext.getPolicyFactory();
-            Policy policy = policyFactory.constructPolicy(policyClazz);
-            FlagUtils.setFieldsFromFlags(ImmutableMap.of("id", id), policy);
-            ((AbstractPolicy)policy).setManagementContext(managementContext);
-            
-            return policy;
+                Map<Object,Object> flags = Maps.newLinkedHashMap();
+                flags.put("id", entityId);
+                if (AbstractApplication.class.isAssignableFrom(entityClazz)) flags.put("mgmt", managementContext);
 
-        } else {
-            LOG.warn("Deprecated rebind of policy without no-arg constructor; this may not be supported in future versions: id="+id+"; type="+policyType);
-            
-            // There are several possibilities for the constructor; find one that works.
-            // Prefer passing in the flags because required for Application to set the management context
-            // TODO Feels very hacky!
-            Map<String, Object> flags = MutableMap.<String, Object>of(
-                    "id", id, 
-                    "deferConstructionChecks", true,
-                    "noConstructionInit", true);
-            flags.putAll(memento.getConfig());
+                // TODO document the multiple sources of flags, and the reason for setting the mgmt context *and* supplying it as the flag
+                // (NB: merge reported conflict as the two things were added separately)
+                entity = (Entity) invokeConstructor(null, entityClazz, new Object[] {flags}, new Object[] {flags, null}, new Object[] {null}, new Object[0]);
 
-            return (Policy) invokeConstructor(null, policyClazz, new Object[] {flags});
-        }
-    }
-
-    /**
-     * Constructs a new enricher, passing to its constructor the enricher id and all of memento.getConfig().
-     */
-    private Enricher newEnricher(EnricherMemento memento, Reflections reflections) {
-        String id = memento.getId();
-        String enricherType = checkNotNull(memento.getType(), "enricher type of %s must not be null in memento", id);
-        Class<? extends Enricher> enricherClazz = reflections.loadClass(enricherType, Enricher.class);
-
-        if (InternalFactory.isNewStyle(enricherClazz)) {
-            InternalPolicyFactory policyFactory = managementContext.getPolicyFactory();
-            Enricher enricher = policyFactory.constructEnricher(enricherClazz);
-            FlagUtils.setFieldsFromFlags(ImmutableMap.of("id", id), enricher);
-            ((AbstractEnricher)enricher).setManagementContext(managementContext);
-            
-            return enricher;
-
-        } else {
-            LOG.warn("Deprecated rebind of enricher without no-arg constructor; this may not be supported in future versions: id="+id+"; type="+enricherType);
-            
-            // There are several possibilities for the constructor; find one that works.
-            // Prefer passing in the flags because required for Application to set the management context
-            // TODO Feels very hacky!
-            Map<String, Object> flags = MutableMap.<String, Object>of(
-                    "id", id, 
-                    "deferConstructionChecks", true,
-                    "noConstructionInit", true);
-            flags.putAll(memento.getConfig());
-
-            return (Enricher) invokeConstructor(reflections, enricherClazz, new Object[] {flags});
-        }
-    }
-
-    /**
-     * Constructs a new enricher, passing to its constructor the enricher id and all of memento.getConfig().
-     */
-    private Feed newFeed(FeedMemento memento, Reflections reflections) {
-        String id = memento.getId();
-        String feedType = checkNotNull(memento.getType(), "feed type of %s must not be null in memento", id);
-        Class<? extends Feed> feedClazz = reflections.loadClass(feedType, Feed.class);
-
-        if (InternalFactory.isNewStyle(feedClazz)) {
-            InternalPolicyFactory policyFactory = managementContext.getPolicyFactory();
-            Feed feed = policyFactory.constructFeed(feedClazz);
-            FlagUtils.setFieldsFromFlags(ImmutableMap.of("id", id), feed);
-            ((AbstractFeed)feed).setManagementContext(managementContext);
-            
-            return feed;
-
-        } else {
-            throw new IllegalStateException("rebind of feed without no-arg constructor unsupported: id="+id+"; type="+feedType);
-        }
-    }
-
-    @SuppressWarnings({ "rawtypes" })
-    private CatalogItem<?, ?> newCatalogItem(CatalogItemMemento memento, Reflections reflections) {
-        String id = memento.getId();
-        String itemType = checkNotNull(memento.getType(), "catalog item type of %s must not be null in memento", id);
-        Class<? extends CatalogItem> clazz = reflections.loadClass(itemType, CatalogItem.class);
-        return invokeConstructor(reflections, clazz, new Object[]{});
-    }
-    
-    private <T> T invokeConstructor(Reflections reflections, Class<T> clazz, Object[]... possibleArgs) {
-        for (Object[] args : possibleArgs) {
-            try {
-                Optional<T> v = Reflections.invokeConstructorWithArgs(clazz, args, true);
-                if (v.isPresent()) {
-                    return v.get();
+                // In case the constructor didn't take the Map arg, then also set it here.
+                // e.g. for top-level app instances such as WebClusterDatabaseExampleApp will (often?) not have
+                // interface + constructor.
+                // TODO On serializing the memento, we should capture which interfaces so can recreate
+                // the proxy+spec (including for apps where there's not an obvious interface).
+                FlagUtils.setFieldsFromFlags(ImmutableMap.of("id", entityId), entity);
+                if (entity instanceof AbstractApplication) {
+                    FlagUtils.setFieldsFromFlags(ImmutableMap.of("mgmt", managementContext), entity);
                 }
-            } catch (Exception e) {
-                throw Exceptions.propagate(e);
+                ((AbstractEntity)entity).setManagementContext(managementContext);
+                managementContext.prePreManage(entity);
+            }
+            
+            setCatalogItemId(entity, catalogItemId);
+            return entity;
+        }
+
+        private void setCatalogItemId(BrooklynObject item, String catalogItemId) {
+            if (catalogItemId!=null) {
+                ((BrooklynObjectInternal)item).setCatalogItemId(catalogItemId);
             }
         }
-        throw new IllegalStateException("Cannot instantiate instance of type "+clazz+"; expected constructor signature not found");
+
+        private <T extends BrooklynObject> Class<? extends T> load(Class<T> bType, Memento memento) {
+            return load(bType, memento.getType(), memento.getCatalogItemId(), memento.getId());
+        }
+        @SuppressWarnings("unchecked")
+        private <T extends BrooklynObject> Class<? extends T> load(Class<T> bType, String jType, String catalogItemId, String contextSuchAsId) {
+            checkNotNull(jType, "Type of %s (%s) must not be null", contextSuchAsId, bType.getSimpleName());
+            if (catalogItemId != null) {
+                BrooklynClassLoadingContext loader = getLoadingContextFromCatalogItemId(catalogItemId, classLoader, rebindContext);
+                return loader.loadClass(jType, bType);
+            } else {
+                // we have previously used reflections; not sure if that's needed?
+                try {
+                    return (Class<T>)reflections.loadClass(jType);
+                } catch (Exception e) {
+                    LOG.warn("Unable to load "+jType+" using reflections; will try standard context");
+                }
+
+                if (BrooklynFeatureEnablement.isEnabled(BrooklynFeatureEnablement.FEATURE_INFER_CATALOG_ITEM_ON_REBIND)) {
+                    //Try loading from whichever catalog bundle succeeds.
+                    BrooklynCatalog catalog = managementContext.getCatalog();
+                    for (CatalogItem<?, ?> item : catalog.getCatalogItems()) {
+                        BrooklynClassLoadingContext catalogLoader = CatalogUtils.newClassLoadingContext(managementContext, item);
+                        Maybe<Class<?>> catalogClass = catalogLoader.tryLoadClass(jType);
+                        if (catalogClass.isPresent()) {
+                            return (Class<? extends T>) catalogClass.get();
+                        }
+                    }
+                    throw new IllegalStateException("No catalogItemId specified and can't load class from either classpath of catalog items");
+                } else {
+                    throw new IllegalStateException("No catalogItemId specified and can't load class from classpath");
+                }
+
+            }
+        }
+
+        /**
+         * Constructs a new location, passing to its constructor the location id and all of memento.getFlags().
+         */
+        private Location newLocation(String locationId, String locationType) {
+            Class<? extends Location> locationClazz = reflections.loadClass(locationType, Location.class);
+
+            if (InternalFactory.isNewStyle(locationClazz)) {
+                // Not using loationManager.createLocation(LocationSpec) because don't want init() to be called
+                // TODO Need to rationalise this to move code into methods of InternalLocationFactory.
+                //      But note that we'll change all locations to be entities at some point!
+                // See same code approach used in #newEntity(EntityMemento, Reflections)
+                InternalLocationFactory locationFactory = managementContext.getLocationFactory();
+                Location location = locationFactory.constructLocation(locationClazz);
+                FlagUtils.setFieldsFromFlags(ImmutableMap.of("id", locationId), location);
+                managementContext.prePreManage(location);
+                ((AbstractLocation)location).setManagementContext(managementContext);
+
+                return location;
+            } else {
+                LOG.warn("Deprecated rebind of location without no-arg constructor; this may not be supported in future versions: id="+locationId+"; type="+locationType);
+
+                // There are several possibilities for the constructor; find one that works.
+                // Prefer passing in the flags because required for Application to set the management context
+                // TODO Feels very hacky!
+                Map<String,?> flags = MutableMap.of("id", locationId, "deferConstructionChecks", true);
+
+                return (Location) invokeConstructor(reflections, locationClazz, new Object[] {flags});
+            }
+            // note 'used' config keys get marked in BasicLocationRebindSupport
+        }
+
+        /**
+         * Constructs a new policy, passing to its constructor the policy id and all of memento.getConfig().
+         */
+        private Policy newPolicy(PolicyMemento memento) {
+            String id = memento.getId();
+            Class<? extends Policy> policyClazz = load(Policy.class, memento.getType(), memento.getCatalogItemId(), id);
+            
+            Policy policy;
+            if (InternalFactory.isNewStyle(policyClazz)) {
+                InternalPolicyFactory policyFactory = managementContext.getPolicyFactory();
+                policy = policyFactory.constructPolicy(policyClazz);
+                FlagUtils.setFieldsFromFlags(ImmutableMap.of("id", id), policy);
+                ((AbstractPolicy)policy).setManagementContext(managementContext);
+
+            } else {
+                LOG.warn("Deprecated rebind of policy without no-arg constructor; this may not be supported in future versions: id="+id+"; type="+policyClazz);
+
+                // There are several possibilities for the constructor; find one that works.
+                // Prefer passing in the flags because required for Application to set the management context
+                // TODO Feels very hacky!
+                Map<String, Object> flags = MutableMap.<String, Object>of(
+                    "id", id, 
+                    "deferConstructionChecks", true,
+                    "noConstructionInit", true);
+                flags.putAll(memento.getConfig());
+
+                policy = invokeConstructor(null, policyClazz, new Object[] {flags});
+            }
+            
+            setCatalogItemId(policy, memento.getCatalogItemId());
+            return policy;
+        }
+
+        /**
+         * Constructs a new enricher, passing to its constructor the enricher id and all of memento.getConfig().
+         */
+        private Enricher newEnricher(EnricherMemento memento) {
+            Class<? extends Enricher> enricherClazz = load(Enricher.class, memento);
+            String id = memento.getId();
+
+            Enricher enricher;
+            if (InternalFactory.isNewStyle(enricherClazz)) {
+                InternalPolicyFactory policyFactory = managementContext.getPolicyFactory();
+                enricher = policyFactory.constructEnricher(enricherClazz);
+                FlagUtils.setFieldsFromFlags(ImmutableMap.of("id", id), enricher);
+                ((AbstractEnricher)enricher).setManagementContext(managementContext);
+
+            } else {
+                LOG.warn("Deprecated rebind of enricher without no-arg constructor; this may not be supported in future versions: id="+id+"; type="+enricherClazz);
+
+                // There are several possibilities for the constructor; find one that works.
+                // Prefer passing in the flags because required for Application to set the management context
+                // TODO Feels very hacky!
+                Map<String, Object> flags = MutableMap.<String, Object>of(
+                    "id", id, 
+                    "deferConstructionChecks", true,
+                    "noConstructionInit", true);
+                flags.putAll(memento.getConfig());
+
+                enricher = invokeConstructor(reflections, enricherClazz, new Object[] {flags});
+            }
+            
+            setCatalogItemId(enricher, memento.getCatalogItemId());
+            return enricher;
+        }
+
+        /**
+         * Constructs a new enricher, passing to its constructor the enricher id and all of memento.getConfig().
+         */
+        private Feed newFeed(FeedMemento memento) {
+            Class<? extends Feed> feedClazz = load(Feed.class, memento);
+            String id = memento.getId();
+
+            Feed feed;
+            if (InternalFactory.isNewStyle(feedClazz)) {
+                InternalPolicyFactory policyFactory = managementContext.getPolicyFactory();
+                feed = policyFactory.constructFeed(feedClazz);
+                FlagUtils.setFieldsFromFlags(ImmutableMap.of("id", id), feed);
+                ((AbstractFeed)feed).setManagementContext(managementContext);
+
+            } else {
+                throw new IllegalStateException("rebind of feed without no-arg constructor unsupported: id="+id+"; type="+feedClazz);
+            }
+            
+            setCatalogItemId(feed, memento.getCatalogItemId());
+            return feed;
+        }
+
+        @SuppressWarnings({ "rawtypes" })
+        private CatalogItem<?, ?> newCatalogItem(CatalogItemMemento memento) {
+            String id = memento.getId();
+            // catalog item subtypes are internal to brooklyn, not in osgi
+            String itemType = checkNotNull(memento.getType(), "catalog item type of %s must not be null in memento", id);
+            Class<? extends CatalogItem> clazz = reflections.loadClass(itemType, CatalogItem.class);
+            return invokeConstructor(reflections, clazz, new Object[]{});
+        }
+
+        private <T> T invokeConstructor(Reflections reflections, Class<T> clazz, Object[]... possibleArgs) {
+            for (Object[] args : possibleArgs) {
+                try {
+                    Optional<T> v = Reflections.invokeConstructorWithArgs(clazz, args, true);
+                    if (v.isPresent()) {
+                        return v.get();
+                    }
+                } catch (Exception e) {
+                    throw Exceptions.propagate(e);
+                }
+            }
+            throw new IllegalStateException("Cannot instantiate instance of type "+clazz+"; expected constructor signature not found");
+        }
     }
 
     /**
@@ -1265,8 +1473,32 @@ public class RebindManagerImpl implements RebindManager {
         return (readOnlyRebindCount < 5) || (readOnlyRebindCount%1000==0);
     }
 
+    public int getReadOnlyRebindCount() {
+        return readOnlyRebindCount;
+    }
+    
+    @Override
+    public Map<String, Object> getMetrics() {
+        Map<String,Object> result = MutableMap.of();
+
+        result.put("rebind", rebindMetrics.asMap());
+        result.put("persist", persistMetrics.asMap());
+        
+        if (readOnlyRebindCount>=0)
+            result.put("rebindReadOnlyCount", readOnlyRebindCount);
+        
+        // include first rebind counts, so we know whether we rebinded or not
+        result.put("firstRebindCounts", MutableMap.of(
+            "applications", firstRebindAppCount,
+            "entities", firstRebindEntityCount,
+            "allItems", firstRebindItemCount));
+        
+        return result;
+    }
+
     @Override
     public String toString() {
         return super.toString()+"[mgmt="+managementContext.getManagementNodeId()+"]";
     }
+
 }

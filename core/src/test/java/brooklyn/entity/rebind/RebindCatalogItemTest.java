@@ -32,8 +32,11 @@ import org.testng.annotations.Test;
 
 import brooklyn.camp.lite.CampPlatformWithJustBrooklynMgmt;
 import brooklyn.camp.lite.TestAppAssemblyInstantiator;
+import brooklyn.catalog.BrooklynCatalog;
 import brooklyn.catalog.CatalogItem;
 import brooklyn.catalog.CatalogLoadMode;
+import brooklyn.catalog.internal.BasicBrooklynCatalog;
+import brooklyn.catalog.internal.CatalogDto;
 import brooklyn.config.BrooklynProperties;
 import brooklyn.config.BrooklynServerConfig;
 import brooklyn.entity.proxying.EntitySpec;
@@ -47,6 +50,8 @@ import com.google.common.collect.Iterables;
 
 public class RebindCatalogItemTest extends RebindTestFixtureWithApp {
 
+    private static final String TEST_VERSION = "0.0.1";
+
     private static final Logger LOG = LoggerFactory.getLogger(RebindCatalogItemTest.class);
     public static class MyPolicy extends AbstractPolicy {}
     private boolean catalogPersistenceWasEnabled;
@@ -54,9 +59,9 @@ public class RebindCatalogItemTest extends RebindTestFixtureWithApp {
     @BeforeMethod(alwaysRun = true)
     @Override
     public void setUp() throws Exception {
-        super.setUp();
         catalogPersistenceWasEnabled = BrooklynFeatureEnablement.isEnabled(BrooklynFeatureEnablement.FEATURE_CATALOG_PERSISTENCE_PROPERTY);
         BrooklynFeatureEnablement.enable(BrooklynFeatureEnablement.FEATURE_CATALOG_PERSISTENCE_PROPERTY);
+        super.setUp();
         BasicCampPlatform platform = new CampPlatformWithJustBrooklynMgmt(origManagementContext);
         MockWebPlatform.populate(platform, TestAppAssemblyInstantiator.class);
         origApp.createAndManageChild(EntitySpec.create(TestEntity.class));
@@ -101,7 +106,10 @@ public class RebindCatalogItemTest extends RebindTestFixtureWithApp {
 
     @Test
     public void testAddAndRebindEntity() throws Exception {
-        String yaml = "name: rebind-yaml-catalog-item-test\n" +
+        String yaml = 
+                "name: rebind-yaml-catalog-item-test\n" +
+                "brooklyn.catalog:\n" +
+                "  version: " + TEST_VERSION + "\n" +
                 "services:\n" +
                 "- type: io.camp.mock:AppServer";
         CatalogItem<?, ?> added = origManagementContext.getCatalog().addItem(yaml);
@@ -121,7 +129,7 @@ public class RebindCatalogItemTest extends RebindTestFixtureWithApp {
         String yaml = "name: Test Policy\n" +
                 "brooklyn.catalog:\n" +
                 "  id: sample_policy\n" +
-                "  version: 0.1.0\n" +
+                "  version: " + TEST_VERSION + "\n" +
                 "brooklyn.policies: \n" +
                 "- type: brooklyn.entity.rebind.RebindCatalogItemTest$MyPolicy\n" +
                 "  brooklyn.config:\n" +
@@ -144,8 +152,8 @@ public class RebindCatalogItemTest extends RebindTestFixtureWithApp {
         // Must make sure that the original catalogue item is not managed and unmanaged in the same
         // persistence window. Because BrooklynMementoPersisterToObjectStore applies writes/deletes
         // asynchronously the winner is down to a race and the test might pass or fail.
-        origManagementContext.getRebindManager().forcePersistNow();
-        origManagementContext.getCatalog().deleteCatalogItem(toRemove.getId());
+        origManagementContext.getRebindManager().forcePersistNow(false, null);
+        origManagementContext.getCatalog().deleteCatalogItem(toRemove.getSymbolicName(), toRemove.getVersion());
         assertEquals(Iterables.size(origManagementContext.getCatalog().getCatalogItems()), 0);
         rebindAndAssertCatalogsAreEqual();
         assertEquals(Iterables.size(newManagementContext.getCatalog().getCatalogItems()), 0);
@@ -164,6 +172,24 @@ public class RebindCatalogItemTest extends RebindTestFixtureWithApp {
         toTag = Iterables.getOnlyElement(newManagementContext.getCatalog().getCatalogItems());
         assertTrue(toTag.tags().containsTag(tag));
         toTag.tags().removeTag(tag);
+    }
+
+    @Test
+    public void testSameCatalogItemIdRemovalAndAdditionRebinds() throws Exception {
+        //The test is not reliable on Windows (doesn't catch the pre-fix problem) -
+        //the store is unable to delete still locked files so the bug doesn't manifest.
+        //TODO investigate if locked files not caused by unclosed streams!
+        String yaml = 
+                "name: rebind-yaml-catalog-item-test\n" +
+                "brooklyn.catalog:\n" +
+                "  version: " + TEST_VERSION + "\n" +
+                "services:\n" +
+                "- type: io.camp.mock:AppServer";
+        BasicBrooklynCatalog catalog = (BasicBrooklynCatalog) origManagementContext.getCatalog();
+        catalog.addItem(yaml);
+        String catalogXml = catalog.toXmlString();
+        catalog.reset(CatalogDto.newDtoFromXmlContents(catalogXml, "Test reset"));
+        rebindAndAssertCatalogsAreEqual();
     }
 
     private void rebindAndAssertCatalogsAreEqual() {

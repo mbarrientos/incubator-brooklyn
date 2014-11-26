@@ -74,7 +74,7 @@ public class WarmStandbyTest {
             objectStore.injectManagementContext(mgmt);
             objectStore.prepareForSharedUse(PersistMode.CLEAN, HighAvailabilityMode.DISABLED);
             persister = new ManagementPlaneSyncRecordPersisterToObjectStore(mgmt, objectStore, classLoader);
-            ((ManagementPlaneSyncRecordPersisterToObjectStore)persister).allowRemoteTimestampInMemento();
+            ((ManagementPlaneSyncRecordPersisterToObjectStore)persister).preferRemoteTimestampInMemento();
             BrooklynMementoPersisterToObjectStore persisterObj = new BrooklynMementoPersisterToObjectStore(objectStore, mgmt.getBrooklynProperties(), classLoader);
             mgmt.getRebindManager().setPersister(persisterObj, PersistenceExceptionHandlerImpl.builder().build());
             ha = ((HighAvailabilityManagerImpl)mgmt.getHighAvailabilityManager())
@@ -134,7 +134,7 @@ public class WarmStandbyTest {
         TestApplication app = TestApplication.Factory.newManagedInstanceForTests(n1.mgmt);
         app.start(MutableList.<Location>of());
         
-        n1.mgmt.getRebindManager().forcePersistNow();
+        n1.mgmt.getRebindManager().forcePersistNow(false, null);
 
         HaMgmtNode n2 = newNode();
         n2.ha.start(HighAvailabilityMode.STANDBY);

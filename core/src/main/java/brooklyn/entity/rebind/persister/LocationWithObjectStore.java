@@ -16,29 +16,12 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package brooklyn.catalog.internal;
+package brooklyn.entity.rebind.persister;
 
-import brooklyn.config.ConfigKey;
+/** Marker interface for locations which can create a {@link PersistenceObjectStore} */
+public interface LocationWithObjectStore {
 
-
-@SuppressWarnings("rawtypes")
-public class CatalogConfigurationDto extends CatalogItemDtoAbstract<ConfigKey,Void> {
+    /** Creates a {@link PersistenceObjectStore} pointed at the given container/directory. */
+    public PersistenceObjectStore newPersistenceObjectStore(String container);
     
-    @Override
-    public CatalogItemType getCatalogItemType() {
-        return CatalogItemType.CONFIGURATION;
-    }
-
-    public Class<ConfigKey> getCatalogItemJavaType() { return ConfigKey.class; }
-
-    @Override
-    public String getRegisteredTypeName() {
-        return getJavaType();
-    }
-    
-    @Override
-    public Class<Void> getSpecType() {
-        return null;
-    }
-
 }

@@ -23,6 +23,7 @@ import javax.annotation.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import brooklyn.basic.BrooklynObject;
 import brooklyn.catalog.CatalogItem;
 import brooklyn.entity.Entity;
 import brooklyn.entity.Feed;
@@ -40,13 +41,13 @@ public class RebindContextLookupContext implements LookupContext {
     @Nullable
     protected final ManagementContext managementContext;
     
-    protected final RebindContext rebindContext;
+    protected final RebindContextImpl rebindContext;
     protected final RebindExceptionHandler exceptionHandler;
     
-    public RebindContextLookupContext(RebindContext rebindContext, RebindExceptionHandler exceptionHandler) {
+    public RebindContextLookupContext(RebindContextImpl rebindContext, RebindExceptionHandler exceptionHandler) {
         this(null, rebindContext, exceptionHandler);
     }
-    public RebindContextLookupContext(ManagementContext managementContext, RebindContext rebindContext, RebindExceptionHandler exceptionHandler) {
+    public RebindContextLookupContext(ManagementContext managementContext, RebindContextImpl rebindContext, RebindExceptionHandler exceptionHandler) {
         this.managementContext = managementContext;
         this.rebindContext = rebindContext;
         this.exceptionHandler = exceptionHandler;
@@ -104,4 +105,34 @@ public class RebindContextLookupContext implements LookupContext {
         }
         return result;
     }
+    
+    @Override
+    public BrooklynObject lookup(BrooklynObjectType type, String id) {
+        switch (type) {
+        case CATALOG_ITEM: return lookupCatalogItem(id);
+        case ENRICHER: return lookupEnricher(id);
+        case ENTITY: return lookupEntity(id);
+        case FEED: return lookupFeed(id);
+        case LOCATION: return lookupLocation(id);
+        case POLICY: return lookupPolicy(id);
+        case UNKNOWN: return null;
+        }
+        throw new IllegalStateException("Unexpected type "+type+" / id "+id);
+    }
+    
+    @Override
+    public BrooklynObject peek(BrooklynObjectType type, String id) {
+        switch (type) {
+        case CATALOG_ITEM: return rebindContext.getCatalogItem(id);
+        case ENRICHER: return rebindContext.getEnricher(id);
+        case ENTITY: return rebindContext.getEntity(id);
+        case FEED: return rebindContext.getFeed(id);
+        case LOCATION: return rebindContext.getLocation(id);
+        case POLICY: return rebindContext.getPolicy(id);
+        case UNKNOWN: return null;
+        }
+        throw new IllegalStateException("Unexpected type "+type+" / id "+id);
+    }
+
+
 }

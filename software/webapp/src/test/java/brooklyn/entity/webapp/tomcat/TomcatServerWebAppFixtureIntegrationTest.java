@@ -18,6 +18,7 @@
  */
 package brooklyn.entity.webapp.tomcat;
 
+import java.io.File;
 import java.net.InetAddress;
 import java.net.Socket;
 import java.net.SocketException;
@@ -31,15 +32,19 @@ import org.slf4j.LoggerFactory;
 import org.testng.Assert;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.DataProvider;
+import org.testng.annotations.Test;
 
 import brooklyn.entity.basic.SoftwareProcess;
 import brooklyn.entity.proxying.EntitySpec;
 import brooklyn.entity.webapp.AbstractWebAppFixtureIntegrationTest;
+import brooklyn.entity.webapp.HttpsSslConfig;
 import brooklyn.entity.webapp.JavaWebAppSoftwareProcess;
 import brooklyn.location.basic.PortRanges;
 import brooklyn.test.entity.TestApplication;
+import brooklyn.util.exceptions.Exceptions;
 import brooklyn.util.repeat.Repeater;
 
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
 
 public class TomcatServerWebAppFixtureIntegrationTest extends AbstractWebAppFixtureIntegrationTest {
@@ -52,17 +57,37 @@ public class TomcatServerWebAppFixtureIntegrationTest extends AbstractWebAppFixt
         TestApplication tomcatApp = newTestApplication();
         TomcatServer tomcat = tomcatApp.createAndManageChild(EntitySpec.create(TomcatServer.class)
                 .configure(TomcatServer.HTTP_PORT, PortRanges.fromString(DEFAULT_HTTP_PORT)));
-        
+
+
+        File keystoreFile;
+        try {
+            keystoreFile = createTemporaryKeyStore("myname", "mypass");
+            keystoreFile.deleteOnExit();
+        } catch (Exception e) {
+            throw Exceptions.propagate(e);
+        }
+
+        TestApplication tomcatHttpsApp = newTestApplication();
+        TomcatServer httpsTomcat = tomcatHttpsApp.createAndManageChild(EntitySpec.create(TomcatServer.class)
+                .configure(TomcatServer.ENABLED_PROTOCOLS, ImmutableSet.of("https"))
+                .configure(TomcatServer.HTTPS_SSL_CONFIG,
+                        new HttpsSslConfig().keyAlias("myname").keystorePassword("mypass").keystoreUrl(keystoreFile.getAbsolutePath())));
+
         return new JavaWebAppSoftwareProcess[][] {
-                new JavaWebAppSoftwareProcess[] {tomcat}
+                new JavaWebAppSoftwareProcess[] { tomcat },
+                new JavaWebAppSoftwareProcess[] { httpsTomcat }
         };
     }
 
-//    // uncomment to be able to test on this class from GUI in Eclipse IDE
-//    @Test(groups = "Integration", dataProvider = "basicEntities")
-//    public void canStartAndStop(final SoftwareProcess entity) {
-//        super.canStartAndStop(entity);
-//    }
+    // exists to be able to test on this class from GUI in Eclipse IDE
+    @Test(groups = "Integration", dataProvider = "basicEntities")
+    public void canStartAndStop(final SoftwareProcess entity) {
+        super.canStartAndStop(entity);
+    }
+    @Test(groups = "Integration", dataProvider = "basicEntities")
+    public void testReportsServiceDownWhenKilled(final SoftwareProcess entity) throws Exception {
+        super.testReportsServiceDownWhenKilled(entity);
+    }
 
     @Override
     // as parent, but with spring travel

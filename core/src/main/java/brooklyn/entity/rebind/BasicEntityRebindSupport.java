@@ -40,6 +40,7 @@ import brooklyn.event.feed.AbstractFeed;
 import brooklyn.location.Location;
 import brooklyn.mementos.EntityMemento;
 import brooklyn.policy.basic.AbstractPolicy;
+import brooklyn.util.exceptions.Exceptions;
 
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
@@ -85,8 +86,9 @@ public class BasicEntityRebindSupport extends AbstractBrooklynObjectRebindSuppor
                 @SuppressWarnings("unused") // just to ensure we can load the declared type? or maybe not needed
                 Class<?> type = (key.getType() != null) ? key.getType() : rebindContext.loadClass(key.getTypeName());
                 ((EntityInternal)entity).setAttributeWithoutPublishing((AttributeSensor<Object>)key, value);
-            } catch (ClassNotFoundException e) {
-                throw Throwables.propagate(e);
+            } catch (Exception e) {
+                LOG.warn("Error adding custom sensor "+entry+" when rebinding "+entity+" (rethrowing): "+e);
+                throw Exceptions.propagate(e);
             }
         }
         
@@ -118,7 +120,7 @@ public class BasicEntityRebindSupport extends AbstractBrooklynObjectRebindSuppor
     @Override
     public void addPolicies(RebindContext rebindContext, EntityMemento memento) {
         for (String policyId : memento.getPolicies()) {
-            AbstractPolicy policy = (AbstractPolicy) rebindContext.getPolicy(policyId);
+            AbstractPolicy policy = (AbstractPolicy) rebindContext.lookup().lookupPolicy(policyId);
             if (policy != null) {
                 try {
                     entity.addPolicy(policy);
@@ -128,6 +130,7 @@ public class BasicEntityRebindSupport extends AbstractBrooklynObjectRebindSuppor
             } else {
                 LOG.warn("Policy not found; discarding policy {} of entity {}({})",
                         new Object[] {policyId, memento.getType(), memento.getId()});
+                rebindContext.getExceptionHandler().onDanglingPolicyRef(policyId);
             }
         }
     }
@@ -135,7 +138,7 @@ public class BasicEntityRebindSupport extends AbstractBrooklynObjectRebindSuppor
     @Override
     public void addEnrichers(RebindContext rebindContext, EntityMemento memento) {
         for (String enricherId : memento.getEnrichers()) {
-            AbstractEnricher enricher = (AbstractEnricher) rebindContext.getEnricher(enricherId);
+            AbstractEnricher enricher = (AbstractEnricher) rebindContext.lookup().lookupEnricher(enricherId);
             if (enricher != null) {
                 try {
                     entity.addEnricher(enricher);
@@ -152,7 +155,7 @@ public class BasicEntityRebindSupport extends AbstractBrooklynObjectRebindSuppor
     @Override
     public void addFeeds(RebindContext rebindContext, EntityMemento memento) {
         for (String feedId : memento.getFeeds()) {
-            AbstractFeed feed = (AbstractFeed) rebindContext.getFeed(feedId);
+            AbstractFeed feed = (AbstractFeed) rebindContext.lookup().lookupFeed(feedId);
             if (feed != null) {
                 try {
                     ((EntityInternal)entity).feeds().addFeed(feed);
@@ -161,9 +164,9 @@ public class BasicEntityRebindSupport extends AbstractBrooklynObjectRebindSuppor
                 }
                 
                 try {
-                    // TODO don't start feeds here necessarily, if we're in RO mode for instance
-                    // (should refactor enrichers and policies and apply to them)
-                    feed.start();
+                    if (!rebindContext.isReadOnly(feed)) {
+                        feed.start();
+                    }
                 } catch (Exception e) {
                     rebindContext.getExceptionHandler().onRebindFailed(BrooklynObjectType.ENTITY, entity, e);
                 }
@@ -178,7 +181,7 @@ public class BasicEntityRebindSupport extends AbstractBrooklynObjectRebindSuppor
         if (memento.getMembers().size() > 0) {
             if (entity instanceof AbstractGroupImpl) {
                 for (String memberId : memento.getMembers()) {
-                    Entity member = rebindContext.getEntity(memberId);
+                    Entity member = rebindContext.lookup().lookupEntity(memberId);
                     if (member != null) {
                         ((AbstractGroupImpl)entity).addMemberInternal(member);
                     } else {
@@ -198,7 +201,7 @@ public class BasicEntityRebindSupport extends AbstractBrooklynObjectRebindSuppor
     
     protected void addChildren(RebindContext rebindContext, EntityMemento memento) {
         for (String childId : memento.getChildren()) {
-            Entity child = rebindContext.getEntity(childId);
+            Entity child = rebindContext.lookup().lookupEntity(childId);
             if (child != null) {
                 entity.addChild(proxy(child));
             } else {
@@ -209,7 +212,7 @@ public class BasicEntityRebindSupport extends AbstractBrooklynObjectRebindSuppor
     }
 
     protected void setParent(RebindContext rebindContext, EntityMemento memento) {
-        Entity parent = (memento.getParent() != null) ? rebindContext.getEntity(memento.getParent()) : null;
+        Entity parent = (memento.getParent() != null) ? rebindContext.lookup().lookupEntity(memento.getParent()) : null;
         if (parent != null) {
             entity.setParent(proxy(parent));
         } else if (memento.getParent() != null){
@@ -220,7 +223,7 @@ public class BasicEntityRebindSupport extends AbstractBrooklynObjectRebindSuppor
     
     protected void addLocations(RebindContext rebindContext, EntityMemento memento) {
         for (String id : memento.getLocations()) {
-            Location loc = rebindContext.getLocation(id);
+            Location loc = rebindContext.lookup().lookupLocation(id);
             if (loc != null) {
                 ((EntityInternal)entity).addLocations(ImmutableList.of(loc));
             } else {

@@ -18,24 +18,22 @@
  */
 package brooklyn.catalog.internal;
 
-import java.util.List;
+import java.util.Collection;
 
 import javax.annotation.Nullable;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.google.common.annotations.Beta;
-import com.google.common.base.Joiner;
-import com.google.common.base.Stopwatch;
-
 import brooklyn.basic.BrooklynObject;
 import brooklyn.basic.BrooklynObjectInternal;
+import brooklyn.catalog.BrooklynCatalog;
 import brooklyn.catalog.CatalogItem;
-import brooklyn.catalog.CatalogItem.CatalogItemLibraries;
+import brooklyn.catalog.CatalogItem.CatalogBundle;
 import brooklyn.catalog.internal.BasicBrooklynCatalog.BrooklynLoaderTracker;
 import brooklyn.config.BrooklynLogging;
 import brooklyn.entity.Entity;
+import brooklyn.entity.basic.EntityInternal;
 import brooklyn.entity.rebind.RebindManagerImpl.RebindTracker;
 import brooklyn.management.ManagementContext;
 import brooklyn.management.classloading.BrooklynClassLoadingContext;
@@ -45,29 +43,44 @@ import brooklyn.management.classloading.OsgiBrooklynClassLoadingContext;
 import brooklyn.management.ha.OsgiManager;
 import brooklyn.management.internal.ManagementContextInternal;
 import brooklyn.util.guava.Maybe;
+import brooklyn.util.text.Strings;
 import brooklyn.util.time.Time;
+
+import com.google.common.annotations.Beta;
+import com.google.common.base.Joiner;
+import com.google.common.base.Stopwatch;
 
 public class CatalogUtils {
     private static final Logger log = LoggerFactory.getLogger(CatalogUtils.class);
 
+    public static final char VERSION_DELIMITER = ':';
+
     public static BrooklynClassLoadingContext newClassLoadingContext(ManagementContext mgmt, CatalogItem<?, ?> item) {
-        CatalogItemLibraries libraries = item.getLibraries();
         // TODO getLibraries() should never be null but sometimes it is still
         // e.g. run CatalogResourceTest without the above check
-        if (libraries == null) {
+        if (item.getLibraries() == null) {
             log.debug("CatalogItemDtoAbstract.getLibraries() is null.", new Exception("Trace for null CatalogItemDtoAbstract.getLibraries()"));
         }
-        return newClassLoadingContext(mgmt, item.getId(), libraries, mgmt.getCatalog().getRootClassLoader());
+        return newClassLoadingContext(mgmt, item.getId(), item.getLibraries());
+    }
+    
+    public static BrooklynClassLoadingContext getClassLoadingContext(Entity entity) {
+        ManagementContext mgmt = ((EntityInternal)entity).getManagementContext();
+        String catId = entity.getCatalogItemId();
+        if (Strings.isBlank(catId)) return JavaBrooklynClassLoadingContext.create(mgmt);
+        CatalogItem<?, ?> cat = getCatalogItemOptionalVersion(mgmt, catId);
+        if (cat==null) {
+            log.warn("Cannot load "+catId+" to get classloader for "+entity+"; will try with standard loader, but might fail subsequently");
+            return JavaBrooklynClassLoadingContext.create(mgmt);
+        }
+        return newClassLoadingContext(mgmt, cat);
     }
 
-    public static BrooklynClassLoadingContext newClassLoadingContext(@Nullable ManagementContext mgmt, String catalogItemId, CatalogItemLibraries libraries, ClassLoader classLoader) {
+    public static BrooklynClassLoadingContext newClassLoadingContext(@Nullable ManagementContext mgmt, String catalogItemId, Collection<CatalogBundle> libraries) {
         BrooklynClassLoadingContextSequential result = new BrooklynClassLoadingContextSequential(mgmt);
 
-        if (libraries!=null) {
-            List<String> bundles = libraries.getBundles();
-            if (bundles!=null && !bundles.isEmpty()) {
-                result.add(new OsgiBrooklynClassLoadingContext(mgmt, catalogItemId, bundles));
-            }
+        if (libraries!=null && !libraries.isEmpty()) {
+            result.add(new OsgiBrooklynClassLoadingContext(mgmt, catalogItemId, libraries));
         }
 
         BrooklynClassLoadingContext loader = BrooklynLoaderTracker.getLoader();
@@ -75,35 +88,53 @@ public class CatalogUtils {
             result.add(loader);
         }
 
-        result.addSecondary(JavaBrooklynClassLoadingContext.create(mgmt, classLoader));
+        result.addSecondary(JavaBrooklynClassLoadingContext.create(mgmt));
+        return result;
+    }
+
+    /**
+     * @deprecated since 0.7.0 only for legacy catalog items which provide a non-osgi loader; see {@link #newDefault(ManagementContext)}
+     */ @Deprecated
+    public static BrooklynClassLoadingContext newClassLoadingContext(@Nullable ManagementContext mgmt, String catalogItemId, Collection<CatalogBundle> libraries, ClassLoader customClassLoader) {
+        BrooklynClassLoadingContextSequential result = new BrooklynClassLoadingContextSequential(mgmt);
+
+        if (libraries!=null && !libraries.isEmpty()) {
+            result.add(new OsgiBrooklynClassLoadingContext(mgmt, catalogItemId, libraries));
+        }
+
+        BrooklynClassLoadingContext loader = BrooklynLoaderTracker.getLoader();
+        if (loader != null) {
+            result.add(loader);
+        }
+
+        result.addSecondary(JavaBrooklynClassLoadingContext.create(mgmt, customClassLoader));
         return result;
     }
 
     /**
      * Registers all bundles with the management context's OSGi framework.
      */
-    public static void installLibraries(ManagementContext managementContext, @Nullable CatalogItemLibraries libraries) {
+    public static void installLibraries(ManagementContext managementContext, @Nullable Collection<CatalogBundle> libraries) {
         if (libraries == null) return;
 
         ManagementContextInternal mgmt = (ManagementContextInternal) managementContext;
-        List<String> bundles = libraries.getBundles();
-        if (!bundles.isEmpty()) {
+        if (!libraries.isEmpty()) {
             Maybe<OsgiManager> osgi = mgmt.getOsgiManager();
             if (osgi.isAbsent()) {
-                throw new IllegalStateException("Unable to load bundles "+bundles+" because OSGi is not running.");
+                throw new IllegalStateException("Unable to load bundles "+libraries+" because OSGi is not running.");
             }
             if (log.isDebugEnabled()) 
                 logDebugOrTraceIfRebinding(log, 
                     "Loading bundles in {}: {}", 
-                    new Object[] {managementContext, Joiner.on(", ").join(bundles)});
+                    new Object[] {managementContext, Joiner.on(", ").join(libraries)});
             Stopwatch timer = Stopwatch.createStarted();
-            for (String bundleUrl : bundles) {
+            for (CatalogBundle bundleUrl : libraries) {
                 osgi.get().registerBundle(bundleUrl);
             }
             if (log.isDebugEnabled()) 
                 logDebugOrTraceIfRebinding(log, 
                     "Registered {} bundles in {}",
-                    new Object[]{bundles.size(), Time.makeTimeStringRounded(timer)});
+                    new Object[]{libraries.size(), Time.makeTimeStringRounded(timer)});
         }
     }
 
@@ -143,6 +174,57 @@ public class CatalogUtils {
         else
             log.debug(message, args);
     }
-    
+
+    public static boolean looksLikeVersionedId(String versionedId) {
+        return versionedId != null && versionedId.indexOf(VERSION_DELIMITER) != -1;
+    }
+
+    public static String getIdFromVersionedId(String versionedId) {
+        if (versionedId == null) return null;
+        int versionDelimiterPos = versionedId.lastIndexOf(VERSION_DELIMITER);
+        if (versionDelimiterPos != -1) {
+            return versionedId.substring(0, versionDelimiterPos);
+        } else {
+            return null;
+        }
+    }
+
+    public static String getVersionFromVersionedId(String versionedId) {
+        if (versionedId == null) return null;
+        int versionDelimiterPos = versionedId.lastIndexOf(VERSION_DELIMITER);
+        if (versionDelimiterPos != -1) {
+            return versionedId.substring(versionDelimiterPos+1);
+        } else {
+            return null;
+        }
+    }
+
+    public static String getVersionedId(String id, String version) {
+        return id + VERSION_DELIMITER + version;
+    }
+
+    //TODO Don't really like this, but it's better to have it here than on the interface to keep the API's 
+    //surface minimal. Could instead have the interface methods accept VerionedId object and have the helpers
+    //construct it as needed.
+    public static CatalogItem<?, ?> getCatalogItemOptionalVersion(ManagementContext mgmt, String versionedId) {
+        if (versionedId == null) return null;
+        if (looksLikeVersionedId(versionedId)) {
+            String id = getIdFromVersionedId(versionedId);
+            String version = getVersionFromVersionedId(versionedId);
+            return mgmt.getCatalog().getCatalogItem(id, version);
+        } else {
+            return mgmt.getCatalog().getCatalogItem(versionedId, BrooklynCatalog.DEFAULT_VERSION);
+        }
+    }
+
+    public static <T,SpecT> CatalogItem<T, SpecT> getCatalogItemOptionalVersion(ManagementContext mgmt, Class<T> type, String versionedId) {
+        if (looksLikeVersionedId(versionedId)) {
+            String id = getIdFromVersionedId(versionedId);
+            String version = getVersionFromVersionedId(versionedId);
+            return mgmt.getCatalog().getCatalogItem(type, id, version);
+        } else {
+            return mgmt.getCatalog().getCatalogItem(type, versionedId, BrooklynCatalog.DEFAULT_VERSION);
+        }
+    }
 
 }
