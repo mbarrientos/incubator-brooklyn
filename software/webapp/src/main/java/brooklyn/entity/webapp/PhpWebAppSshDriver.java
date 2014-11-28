@@ -123,7 +123,7 @@ public abstract class PhpWebAppSshDriver extends AbstractSoftwareProcessSshDrive
 
     @Override
     public String deployGitResource(String url, String targetName) {
-        log.info("{} deploying Git Resource{} to {}:{}", new Object[]{entity, url, getHostname()});
+        log.info("{} deploying Git Resource {} to {}:{}", new Object[]{entity, url, getHostname()});
         String deployTargetDir = getDeployDir() + targetName;
         int copyResult = copyUsingProtocol(url, deployTargetDir);
         if (copyResult != 0)
@@ -173,19 +173,16 @@ public abstract class PhpWebAppSshDriver extends AbstractSoftwareProcessSshDrive
     @Override
     public void install() {
         //Fixme use the newScript to install php
-//        List<String> commands = ImmutableList.<String>builder()
-//                .add(BashCommands.installPackage(MutableMap.of("apt", "php5"), null))
-//                .build();
-//        log.info("Installing php5 {}", new Object[]{this});
-//        newScript(INSTALLING)
-//                .body.append(commands)
-//                .execute();
+
         int resultOfCommand = getMachine().execCommands("install php", ImmutableList.of("sudo apt-get -y install php5"));
-        if (resultOfCommand != 0)
+        if (resultOfCommand != 0) {
             log.warn("Problem installing php result {}", resultOfCommand);
+        }
+
         resultOfCommand = getMachine().execCommands("install php-mysql", ImmutableList.of("sudo apt-get -y install php5-mysql"));
-        if (resultOfCommand != 0)
+        if (resultOfCommand != 0) {
             log.warn("Problem installing php-mysql module result {}", resultOfCommand);
+        }
     }
 
     @Override
