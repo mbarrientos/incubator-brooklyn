@@ -402,13 +402,13 @@ public class ApacheSshDriver extends PhpWebAppSshDriver implements ApacheDriver 
         Set<String> configurationParameters;
         if (databaseParameters != null) {
             configurationParameters = databaseParameters.keySet();
-            log.info("DATABASE-Command!! Path {} ", new Object[]{pathFile});
-            log.info("DATABASE-Command!! Number Keys {} ", new Object[]{configurationParameters.size()});
+            log.debug("DATABASE-Command!! Path {} ", new Object[]{pathFile});
+            log.debug("DATABASE-Command!! Number Keys {} ", new Object[]{configurationParameters.size()});
             for (String configurationParameter : configurationParameters) {
                 command = String.format(
                         "sed -i 's/define([ ]*'\\''%s'\\''[ ]*,[ ]*'\\''[ a-zA-Z0-9'.']*'\\''[ ]*);/define('\\''%s'\\'' , '\\''%s'\\'');/g' %s",
                         configurationParameter, configurationParameter, scapeString(databaseParameters.get(configurationParameter)), pathFile);
-                log.info("DATABASE-Command!!:: " + command);
+                log.debug("DATABASE-Command-Param-Configuration!!:: " + command);
                 getMachine().execCommands("configParamDatabaseConnection", ImmutableList.of(command));
             }
 //            Collection<String> st = getEntity().phpSys();
