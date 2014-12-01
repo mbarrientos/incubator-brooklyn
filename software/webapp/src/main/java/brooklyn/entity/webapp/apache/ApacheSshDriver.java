@@ -362,7 +362,7 @@ public class ApacheSshDriver extends PhpWebAppSshDriver implements ApacheDriver 
 
     @Override
     public void kill() {
-        stop();
+        newScript(KILLING).execute();
     }
 
     private String getBrooklynIPv4() {
