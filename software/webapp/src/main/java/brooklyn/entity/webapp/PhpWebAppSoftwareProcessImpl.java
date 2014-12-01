@@ -82,13 +82,13 @@ public abstract class PhpWebAppSoftwareProcessImpl extends SoftwareProcessImpl i
 
     @Override
     protected void preStop(){
+        super.preStop();
         //zero our workrate derived workrates.
         //TODO might not be enough, as a policy may still be executing and have a record of historic vals;
         // should remove policies
         // also nor sure we want this; implies more generally a resposibility for sensor to announce things
         // disconnected
         putEnricherValuesToNullValue();
-        super.doStop();
     }
 
     private void putEnricherValuesToNullValue() {
