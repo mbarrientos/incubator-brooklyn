@@ -86,7 +86,7 @@ public interface ApacheServer extends PhpWebAppSoftwareProcess, PhpWebAppService
     AttributeSensor<Boolean> MONITOR_URL_UP =
             Sensors.newBooleanSensor("webapp.monitor.up", "Monitor server is responding with OK");
 
-    @SetFromFlag("total_byte")
+    @SetFromFlag("total_kbyte")
     AttributeSensor<Long> TOTAL_KBYTE =
             Sensors.newLongSensor("webapp.total.kbyte", "Total server traffic in kbytes");
 
