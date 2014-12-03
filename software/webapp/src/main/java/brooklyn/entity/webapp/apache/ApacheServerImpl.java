@@ -19,6 +19,7 @@
 package brooklyn.entity.webapp.apache;
 
 
+import brooklyn.enricher.Enrichers;
 import brooklyn.entity.Entity;
 import brooklyn.entity.basic.Attributes;
 import brooklyn.entity.webapp.PhpWebAppSoftwareProcessImpl;
@@ -29,6 +30,8 @@ import brooklyn.event.feed.http.HttpPollConfig;
 import brooklyn.event.feed.http.HttpValueFunctions;
 import brooklyn.policy.Enricher;
 import brooklyn.util.guava.Functionals;
+import brooklyn.event.Sensor;
+
 import com.google.common.base.Function;
 import com.google.common.base.Functions;
 import org.slf4j.Logger;
@@ -36,6 +39,7 @@ import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
 import java.util.Map;
+import java.util.Collection;
 import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
 
@@ -178,18 +182,18 @@ public class ApacheServerImpl extends PhpWebAppSoftwareProcessImpl implements Ap
                 .poll(new HttpPollConfig<Boolean>(MONITOR_URL_UP)
                         .onSuccess(HttpValueFunctions.responseCodeEquals(200))
                         .onFailureOrException(Functions.constant(false)))
-                .poll(new HttpPollConfig<Long>(TOTAL_ACCESSES).onSuccess(
+                .poll(new HttpPollConfig<Integer>(REQUEST_COUNT).onSuccess(
                         Functionals.chain(HttpValueFunctions.stringContentsFunction(),
-                                parseApacheStatus("Total Accesses"), cast(Long.class))))
+                                parseApacheStatus("Total Accesses"), cast(Integer.class))) )
                 .poll(new HttpPollConfig<Long>(TOTAL_KBYTE).onSuccess(
                         Functionals.chain(HttpValueFunctions.stringContentsFunction(),
                                 parseApacheStatus("Total kBytes"), cast(Long.class))))
                 .poll(new HttpPollConfig<Double>(CPU_LOAD).onSuccess(
                         Functionals.chain(HttpValueFunctions.stringContentsFunction(),
                                 parseApacheStatus("CPULoad"), cast(Double.class))))
-                .poll(new HttpPollConfig<Long>(UP_TIME).onSuccess(
+                .poll(new HttpPollConfig<Integer>(TOTAL_PROCESSING_TIME).onSuccess(
                         Functionals.chain(HttpValueFunctions.stringContentsFunction(),
-                                parseApacheStatus("Uptime"), cast(Long.class))))
+                                parseApacheStatus("Uptime"), cast(Integer.class))))
                 .poll(new HttpPollConfig<Double>(REQUEST_PER_SEC).onSuccess(
                         Functionals.chain(HttpValueFunctions.stringContentsFunction(),
                                 parseApacheStatus("ReqPerSec"), cast(Double.class))))
