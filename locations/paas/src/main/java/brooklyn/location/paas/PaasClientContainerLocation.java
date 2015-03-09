@@ -18,9 +18,7 @@
  */
 package brooklyn.location.paas;
 
-import brooklyn.location.PaasProvisioningLocation;
-import brooklyn.location.basic.AbstractLocation;
+import brooklyn.location.Location;
 
-public abstract class AbstractPaasProvisioningLocation<T extends AbstractPaasLocation> extends AbstractLocation implements PaasProvisioningLocation<T> {
-
+public interface PaasClientContainerLocation extends Location {
 }

@@ -16,23 +16,14 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package brooklyn.location.paas.cloudfoundry;
+package brooklyn.location.paas;
 
-import brooklyn.location.LocationNotAvailableException;
-import brooklyn.location.paas.AbstractPaasProvisioningLocation;
+import brooklyn.location.Location;
+import brooklyn.util.net.HasNetworkAddresses;
 
 import java.util.Map;
 
-public class CloudFoundryPaasProvisioningLocation extends AbstractPaasProvisioningLocation<CloudFoundryPaasLocation> {
+public interface PaasLocation extends Location {
 
-
-    @Override
-    public CloudFoundryPaasLocation obtain(Map<?, ?> flags) throws LocationNotAvailableException {
-        return null;
-    }
-
-    @Override
-    public void release(CloudFoundryPaasLocation machine) {
-
-    }
+    PaasClientContainerLocation setUp(Map<?,?> flags);
 }

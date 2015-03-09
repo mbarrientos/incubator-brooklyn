@@ -16,10 +16,12 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package brooklyn.location;
+package brooklyn.location.paas.cloudfoundry;
 
-import brooklyn.util.net.HasNetworkAddresses;
+import brooklyn.location.paas.AbstractPaasClientContainerLocation;
 
-public interface PaasLocation extends AddressableLocation, HasNetworkAddresses {
+
+public class CloudFoundryClientContainerLocation extends AbstractPaasClientContainerLocation {
+
 
 }

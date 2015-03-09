@@ -1,1 +1,1 @@
-brooklyn.location.paas.AbstractPaasLocationResolver
+brooklyn.location.paas.cloudfoundry.CloudFoundryPaasLocationResolver

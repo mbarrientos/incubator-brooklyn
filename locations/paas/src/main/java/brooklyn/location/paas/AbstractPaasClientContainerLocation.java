@@ -20,14 +20,12 @@ package brooklyn.location.paas;
 
 import brooklyn.config.ConfigKey;
 import brooklyn.location.Location;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.Collection;
 import java.util.Map;
 
-public abstract class AbstractPaasLocation implements PaasLocation {
-    public static final Logger LOG = LoggerFactory.getLogger(AbstractPaasLocation.class);
+
+public abstract class AbstractPaasClientContainerLocation implements PaasClientContainerLocation {
 
 
     @Override
@@ -109,4 +107,6 @@ public abstract class AbstractPaasLocation implements PaasLocation {
     public <T> T getExtension(Class<T> extensionType) {
         return null;
     }
+
+
 }
