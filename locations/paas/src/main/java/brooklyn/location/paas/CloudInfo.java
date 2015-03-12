@@ -18,7 +18,5 @@
  */
 package brooklyn.location.paas;
 
-import brooklyn.location.Location;
-
-public interface PaasClientContainerLocation extends Location {
+public class CloudInfo {
 }

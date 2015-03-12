@@ -16,97 +16,110 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package brooklyn.location.paas;
+package brooklyn.entity.webapp.jboss;
 
-import brooklyn.config.ConfigKey;
+import brooklyn.entity.basic.EntityLocal;
+import brooklyn.entity.webapp.FilenameToWebContextMapper;
+import brooklyn.entity.webapp.HttpsSslConfig;
 import brooklyn.location.Location;
 
-import java.util.Collection;
-import java.util.Map;
+import java.io.File;
+import java.util.Set;
 
 
-public abstract class AbstractPaasClientContainerLocation implements PaasClientContainerLocation {
-
-
+public class JBoss7CloudFoundryDriver implements JBoss7Driver {
     @Override
-    public String getId() {
+    public String getSslKeystoreFile() {
         return null;
     }
 
     @Override
-    public String getDisplayName() {
+    public Set<String> getEnabledProtocols() {
         return null;
     }
 
     @Override
-    public String getCatalogItemId() {
+    public Integer getHttpPort() {
         return null;
     }
 
     @Override
-    public TagSupport tags() {
+    public Integer getHttpsPort() {
         return null;
     }
 
     @Override
-    public TagSupport getTagSupport() {
+    public HttpsSslConfig getHttpsSslConfig() {
         return null;
     }
 
     @Override
-    public Location getParent() {
+    public void deploy(File file) {
+
+    }
+
+    @Override
+    public void deploy(File f, String targetName) {
+
+    }
+
+    @Override
+    public String deploy(String url, String targetName) {
         return null;
     }
 
     @Override
-    public Collection<Location> getChildren() {
+    public void undeploy(String targetName) {
+
+    }
+
+    @Override
+    public FilenameToWebContextMapper getFilenameContextMapper() {
         return null;
     }
 
     @Override
-    public void setParent(Location newParent) {
-
-    }
-
-    @Override
-    public String toVerboseString() {
-        return null;
-    }
-
-    @Override
-    public boolean containsLocation(Location potentialDescendent) {
+    public boolean isJmxEnabled() {
         return false;
     }
 
     @Override
-    public <T> T getConfig(ConfigKey<T> key) {
+    public EntityLocal getEntity() {
         return null;
     }
 
     @Override
-    public <T> T getConfig(ConfigKey.HasConfigKey<T> key) {
+    public Location getLocation() {
         return null;
     }
 
     @Override
-    public boolean hasConfig(ConfigKey<?> key, boolean includeInherited) {
+    public boolean isRunning() {
         return false;
     }
 
     @Override
-    public Map<String, Object> getAllConfig(boolean includeInherited) {
-        return null;
+    public void rebind() {
+
     }
 
     @Override
-    public boolean hasExtension(Class<?> extensionType) {
-        return false;
+    public void start() {
+
     }
 
     @Override
-    public <T> T getExtension(Class<T> extensionType) {
-        return null;
+    public void restart() {
+
     }
 
+    @Override
+    public void stop() {
 
+    }
+
+    @Override
+    public void kill() {
+
+    }
 }

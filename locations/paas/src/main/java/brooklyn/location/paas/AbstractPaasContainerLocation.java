@@ -20,19 +20,12 @@ package brooklyn.location.paas;
 
 import brooklyn.config.ConfigKey;
 import brooklyn.location.Location;
-import brooklyn.location.MachineDetails;
-import brooklyn.location.OsDetails;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
-import javax.annotation.Nullable;
-import java.net.InetAddress;
 import java.util.Collection;
 import java.util.Map;
-import java.util.Set;
 
-public abstract class AbstractPaasLocation implements PaasLocation {
-    public static final Logger LOG = LoggerFactory.getLogger(AbstractPaasLocation.class);
+
+public abstract class AbstractPaasContainerLocation implements PaasContainerLocation {
 
 
     @Override
@@ -115,34 +108,7 @@ public abstract class AbstractPaasLocation implements PaasLocation {
         return null;
     }
 
-    @Override
-    public InetAddress getAddress() {
-        return null;
-    }
 
-    @Override
-    public OsDetails getOsDetails() {
-        return null;
-    }
 
-    @Override
-    public MachineDetails getMachineDetails() {
-        return null;
-    }
 
-    @Nullable
-    @Override
-    public String getHostname() {
-        return null;
-    }
-
-    @Override
-    public Set<String> getPublicAddresses() {
-        return null;
-    }
-
-    @Override
-    public Set<String> getPrivateAddresses() {
-        return null;
-    }
 }

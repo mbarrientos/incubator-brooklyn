@@ -19,7 +19,7 @@
 package brooklyn.location.paas.cloudfoundry;
 
 import brooklyn.location.paas.AbstractPaasLocation;
-import brooklyn.location.paas.PaasClientContainerLocation;
+import brooklyn.location.paas.PaasContainerLocation;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -30,10 +30,11 @@ public class CloudFoundryPaasLocation extends AbstractPaasLocation {
 
     @Override
     /**
-     * It will return a {@link CloudFoundryClientContainerLocation}.
+     * It will return a {@link CloudFoundryContainerLocation}.
      */
-    public PaasClientContainerLocation setUp(Map<?, ?> flags) {
+    public PaasContainerLocation setUp(Map<?, ?> flags) {
         return null;
     }
+
 
 }

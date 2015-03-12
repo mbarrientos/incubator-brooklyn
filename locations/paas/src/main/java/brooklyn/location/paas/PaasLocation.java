@@ -18,12 +18,11 @@
  */
 package brooklyn.location.paas;
 
-import brooklyn.location.Location;
-import brooklyn.util.net.HasNetworkAddresses;
+import brooklyn.location.MachineLocation;
 
 import java.util.Map;
 
-public interface PaasLocation extends Location {
+public interface PaasLocation extends MachineLocation {
 
-    PaasClientContainerLocation setUp(Map<?,?> flags);
+    PaasContainerLocation setUp(Map<?,?> flags);
 }

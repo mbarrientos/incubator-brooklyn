@@ -16,12 +16,21 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package brooklyn.location.paas.cloudfoundry;
+package brooklyn.location.paas;
 
-import brooklyn.location.paas.AbstractPaasClientContainerLocation;
+import brooklyn.location.Location;
 
+public interface PaasContainerLocation extends Location {
 
-public class CloudFoundryClientContainerLocation extends AbstractPaasClientContainerLocation {
-
+    public void createApplication(String application);
+    public void createService(String service);
+    public void deleteService(String service);
+    public void bindService(String service, String application);
+    public void updateApplication(String application, String newApplication);
+    public CloudInfo getConfigInfo();
+    public String  startApplication(String application);
+    public void stopApplication(String application);
+    public String restartApplication(String application);
+    public void deleteApplication(String application);
 
 }
