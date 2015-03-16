@@ -16,12 +16,14 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package brooklyn.location.paas;
+package brooklyn.location.paas.cloudfoundry;
 
 import brooklyn.config.ConfigKey;
 import brooklyn.location.Location;
 import brooklyn.location.MachineDetails;
 import brooklyn.location.OsDetails;
+import brooklyn.location.basic.AbstractLocation;
+import org.cloudfoundry.client.lib.CloudFoundryClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -31,9 +33,49 @@ import java.util.Collection;
 import java.util.Map;
 import java.util.Set;
 
-public abstract class AbstractPaasLocation implements PaasLocation {
-    public static final Logger LOG = LoggerFactory.getLogger(AbstractPaasLocation.class);
+public class CloudFoundryPaasLocation extends AbstractLocation implements PaasLocation {
+    public static final Logger LOG = LoggerFactory.getLogger(CloudFoundryPaasLocation.class);
 
+
+
+    CloudFoundryClient client;
+
+    public CloudFoundryPaasLocation(){
+        //CloudCredentials credentials = new CloudCredentials(USER, PASSWORD);
+        //client = new CloudFoundryClient(credentials, getTargetURL(ENDPOINT), ORG, SPACE, ALL_CERTS);
+        client.login();
+    }
+
+    @Override
+    public InetAddress getAddress() {
+        return null;
+    }
+
+    @Override
+    public OsDetails getOsDetails() {
+        return null;
+    }
+
+    @Override
+    public MachineDetails getMachineDetails() {
+        return null;
+    }
+
+    @Nullable
+    @Override
+    public String getHostname() {
+        return null;
+    }
+
+    @Override
+    public Set<String> getPublicAddresses() {
+        return null;
+    }
+
+    @Override
+    public Set<String> getPrivateAddresses() {
+        return null;
+    }
 
     @Override
     public String getId() {
@@ -112,37 +154,6 @@ public abstract class AbstractPaasLocation implements PaasLocation {
 
     @Override
     public <T> T getExtension(Class<T> extensionType) {
-        return null;
-    }
-
-    @Override
-    public InetAddress getAddress() {
-        return null;
-    }
-
-    @Override
-    public OsDetails getOsDetails() {
-        return null;
-    }
-
-    @Override
-    public MachineDetails getMachineDetails() {
-        return null;
-    }
-
-    @Nullable
-    @Override
-    public String getHostname() {
-        return null;
-    }
-
-    @Override
-    public Set<String> getPublicAddresses() {
-        return null;
-    }
-
-    @Override
-    public Set<String> getPrivateAddresses() {
         return null;
     }
 }

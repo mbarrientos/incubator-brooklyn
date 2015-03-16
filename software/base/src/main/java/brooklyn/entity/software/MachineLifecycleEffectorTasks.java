@@ -28,8 +28,6 @@ import java.util.concurrent.Callable;
 
 import javax.annotation.Nullable;
 
-import brooklyn.location.paas.PaasContainerLocation;
-import brooklyn.location.paas.PaasLocation;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -240,12 +238,6 @@ public abstract class MachineLifecycleEffectorTasks {
         startInLocation(getLocation(locations));
     }
 
-
-    protected Map<String ,Object> obtainClientFlags(PaasLocation location){
-        return null;
-    }
-
-
     /** Dispatches to the appropriate method(s) to start in the given location. */
     protected void startInLocation(final Location location) {
         Supplier<MachineLocation> locationS = null;
@@ -254,10 +246,7 @@ public abstract class MachineLifecycleEffectorTasks {
             locationS = Tasks.supplier(machineTask);
         } else if (location instanceof MachineLocation) {
             locationS = Suppliers.ofInstance((MachineLocation)location);
-        } else if(location instanceof PaasLocation){
-            locationS=Suppliers.ofInstance(((MachineLocation)((PaasLocation) location).setUp(null)));
         }
-
         Preconditions.checkState(locationS != null, "Unsupported location "+location+", when starting "+entity());
 
         final Supplier<MachineLocation> locationSF = locationS;

@@ -300,7 +300,7 @@ public class BasicLocationRegistry implements LocationRegistry {
     }
     
     protected LocationResolver getSpecDefaultResolver(String spec) {
-        return getSpecFirstResolver(spec, "id", "named", "jclouds");
+        return getSpecFirstResolver(spec, "id", "named", "jclouds", "cloud-foundry");
     }
     protected LocationResolver getSpecFirstResolver(String spec, String ...resolversToCheck) {
         for (String resolverId: resolversToCheck) {

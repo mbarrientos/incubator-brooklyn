@@ -18,21 +18,21 @@
  */
 package brooklyn.entity.drivers;
 
-import java.lang.reflect.Constructor;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import brooklyn.location.Location;
 import brooklyn.location.basic.SshMachineLocation;
+import brooklyn.location.paas.cloudfoundry.CloudFoundryPaasLocation;
 import brooklyn.util.collections.MutableList;
 import brooklyn.util.collections.MutableMap;
 import brooklyn.util.exceptions.Exceptions;
 import brooklyn.util.exceptions.ReferenceWithError;
 import brooklyn.util.text.Strings;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.lang.reflect.Constructor;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
 
 /**
  * Follows a class naming convention: the driver interface typically ends in "Driver", and the implementation 
@@ -54,6 +54,7 @@ public class ReflectiveEntityDriverFactory {
     
     public ReflectiveEntityDriverFactory() {
         addRule(DriverInferenceForSshLocation.DEFAULT_IDENTIFIER, new DriverInferenceForSshLocation());
+        addRule(DriverInferenceForCloudFoundryLocation.DEFAULT_IDENTIFIER, new DriverInferenceForCloudFoundryLocation());
     }
     
     public interface DriverInferenceRule {
@@ -162,6 +163,21 @@ public class ReflectiveEntityDriverFactory {
                 throw new IllegalArgumentException(String.format("Driver name [%s] doesn't end with 'Driver'; cannot auto-detect SshDriver class name", driverInterfaceName));
             }
             return Strings.removeFromEnd(driverInterfaceName, "Driver")+"SshDriver";
+        }
+    }
+
+    public static class DriverInferenceForCloudFoundryLocation extends AbstractDriverInferenceRule {
+
+        public static final String DEFAULT_IDENTIFIER = "cloud-foundry-location-driver-inference-rule";
+
+        @Override
+        public <D extends EntityDriver> String inferDriverClassName(DriverDependentEntity<D> entity, Class<D> driverInterface, Location location) {
+            String driverInterfaceName = driverInterface.getName();
+            if (!(location instanceof CloudFoundryPaasLocation)) return null;
+            if (!driverInterfaceName.endsWith("Driver")) {
+                throw new IllegalArgumentException(String.format("Driver name [%s] doesn't end with 'Driver'; cannot auto-detect CloudFoundryDriver class name", driverInterfaceName));
+            }
+            return Strings.removeFromEnd(driverInterfaceName, "Driver")+"CloudFoundryDriver";
         }
     }
 

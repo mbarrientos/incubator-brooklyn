@@ -20,30 +20,49 @@ package brooklyn.location.paas.cloudfoundry;
 
 import brooklyn.location.Location;
 import brooklyn.location.LocationRegistry;
-import brooklyn.location.paas.AbstractPaasLocationResolver;
+import brooklyn.location.LocationSpec;
+import brooklyn.location.basic.BasicLocationRegistry;
 import brooklyn.management.ManagementContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.Map;
 
+import static com.google.common.base.Preconditions.checkNotNull;
+
 public class CloudFoundryPaasLocationResolver extends AbstractPaasLocationResolver {
+
+    public static final Logger log = LoggerFactory.getLogger(CloudFoundryPaasLocationResolver.class);
+
+    public static final String ClOUD_FOUNDRY = "cloud-foundry";
+
+    private ManagementContext managementContext;
 
     @Override
     public void init(ManagementContext managementContext) {
-
+        this.managementContext = checkNotNull(managementContext, "managementContext");
     }
 
     @Override
     public String getPrefix() {
-        return null;
+        return ClOUD_FOUNDRY;
     }
 
     @Override
     public boolean accepts(String spec, LocationRegistry registry) {
+        if (BasicLocationRegistry.isResolverPrefixForSpec(this, spec, true)) {
+            return true;
+        } else {
+            // TODO: check valid CloudFoundry format on spec
+        }
         return false;
     }
 
     @Override
     public Location newLocationFromString(Map locationFlags, String spec, LocationRegistry registry) {
-        return null;
+        // TODO: TODO
+
+        return managementContext.getLocationManager().createLocation(
+                LocationSpec.create(CloudFoundryPaasLocation.class).configure(locationFlags));
     }
 }

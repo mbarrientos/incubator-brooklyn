@@ -16,7 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package brooklyn.location.paas;
+package brooklyn.location.paas.cloudfoundry;
 
 import brooklyn.location.LocationResolver;
 

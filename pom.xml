@@ -200,6 +200,7 @@
         <jsr311-api.version>1.1.1</jsr311-api.version>
         <maxmind.version>0.8.1</maxmind.version>
         <jna.version>4.0.0</jna.version>
+        <cloud-foundry-client.version>1.1.0</cloud-foundry-client.version>
 
         <!-- Release -->
         <!-- no passphrase by default, so we can do automated deploy builds;
@@ -623,6 +624,11 @@
                 <groupId>net.java.dev.jna</groupId>
                 <artifactId>jna-platform</artifactId>
                 <version>${jna.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.cloudfoundry</groupId>
+                <artifactId>cloudfoundry-client-lib</artifactId>
+                <version>${cloud-foundry-client.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>
