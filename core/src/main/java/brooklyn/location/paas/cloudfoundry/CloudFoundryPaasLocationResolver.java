@@ -18,6 +18,8 @@
  */
 package brooklyn.location.paas.cloudfoundry;
 
+import brooklyn.config.ConfigKey;
+import brooklyn.entity.basic.ConfigKeys;
 import brooklyn.location.Location;
 import brooklyn.location.LocationRegistry;
 import brooklyn.location.LocationSpec;
@@ -35,6 +37,8 @@ public class CloudFoundryPaasLocationResolver extends AbstractPaasLocationResolv
     public static final Logger log = LoggerFactory.getLogger(CloudFoundryPaasLocationResolver.class);
 
     public static final String ClOUD_FOUNDRY = "cloud-foundry";
+    public static ConfigKey<String> ADDRESS = ConfigKeys.newStringConfigKey("address");
+    public static final String PIVOTAL_HOSTNAME = "run.pivotal.io";
 
     private ManagementContext managementContext;
 
@@ -61,7 +65,7 @@ public class CloudFoundryPaasLocationResolver extends AbstractPaasLocationResolv
     @Override
     public Location newLocationFromString(Map locationFlags, String spec, LocationRegistry registry) {
         // TODO: TODO
-
+        locationFlags.put(ADDRESS.getName(), PIVOTAL_HOSTNAME);
         return managementContext.getLocationManager().createLocation(
                 LocationSpec.create(locationFlags, CloudFoundryPaasLocation.class));
     }

@@ -23,9 +23,8 @@ import brooklyn.entity.basic.ConfigKeys;
 import brooklyn.location.MachineDetails;
 import brooklyn.location.OsDetails;
 import brooklyn.location.basic.AbstractLocation;
-import brooklyn.util.net.Urls;
-import brooklyn.util.text.StringShortener;
-import brooklyn.util.text.Strings;
+import brooklyn.util.flags.SetFromFlag;
+import com.google.common.collect.ImmutableSet;
 import org.cloudfoundry.client.lib.CloudCredentials;
 import org.cloudfoundry.client.lib.CloudFoundryClient;
 import org.slf4j.Logger;
@@ -33,6 +32,8 @@ import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
 import java.net.InetAddress;
+import java.net.MalformedURLException;
+import java.net.URI;
 import java.net.URL;
 import java.util.Set;
 
@@ -47,22 +48,38 @@ public class CloudFoundryPaasLocation extends AbstractLocation implements PaasLo
 
     CloudFoundryClient client;
 
-    public CloudFoundryPaasLocation(){
+    @SetFromFlag(nullable = false)
+    protected InetAddress address;
+
+
+    public CloudFoundryPaasLocation() {
         super();
     }
 
     @Override
     public void init() {
         super.init();
+        //init client
+        initClient();
+    }
 
+    private void initClient() {
         CloudCredentials credentials = new CloudCredentials(getConfig(CF_USER), getConfig(CF_PASSWORD));
-        client = new CloudFoundryClient(credentials, Urls.toUrl(getConfig(CF_ENDPOINT)), getConfig(CF_ORG), getConfig(CF_SPACE), true);
+        client = new CloudFoundryClient(credentials, getTargetURL(getConfig(CF_ENDPOINT)), getConfig(CF_ORG), getConfig(CF_SPACE), true);
         client.login();
+    }
+
+    private static URL getTargetURL(String target) {
+        try {
+            return URI.create(target).toURL();
+        } catch (MalformedURLException e) {
+            throw new RuntimeException("The target URL is not valid: " + e.getMessage());
+        }
     }
 
     @Override
     public InetAddress getAddress() {
-        return null;
+        return address;
     }
 
     @Override
@@ -78,16 +95,21 @@ public class CloudFoundryPaasLocation extends AbstractLocation implements PaasLo
     @Nullable
     @Override
     public String getHostname() {
-        return null;
+        return address.getHostName();
     }
 
     @Override
     public Set<String> getPublicAddresses() {
-        return null;
+        return ImmutableSet.of(address.getHostAddress());
     }
 
     @Override
     public Set<String> getPrivateAddresses() {
         return null;
     }
+
+    public CloudFoundryClient getCloudFoundryClient() {
+        return client;
+    }
+
 }

@@ -21,6 +21,14 @@ package brooklyn.entity.java;
 
 import brooklyn.location.paas.cloudfoundry.CloudFoundryPaasLocation;
 import brooklyn.util.ResourceUtils;
+import org.cloudfoundry.client.lib.CloudFoundryClient;
+import org.cloudfoundry.client.lib.domain.CloudApplication;
+import org.cloudfoundry.client.lib.domain.Staging;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.util.LinkedList;
+import java.util.List;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 
@@ -29,14 +37,43 @@ import static com.google.common.base.Preconditions.checkNotNull;
  */
 public class VanillaJavaAppCloudFoundryDriver implements VanillaJavaAppDriver {
 
+    private static final Logger log = LoggerFactory.getLogger(VanillaJavaAppCloudFoundryDriver.class);
+
+    private static final int DEFAULT_MEMORY = 512; // MB
+
     private final CloudFoundryPaasLocation location;
     private final ResourceUtils resource;
     VanillaJavaAppImpl entity;
+    String applicationPath;
+    String applicationName;
+    CloudFoundryClient client;
+
+    private boolean isRunning = false;
 
     public VanillaJavaAppCloudFoundryDriver(VanillaJavaAppImpl entity, CloudFoundryPaasLocation machine) {
         this.entity = checkNotNull(entity, "entity");
         this.location = checkNotNull(machine, "location");
         this.resource = ResourceUtils.create(entity);
+
+        init();
+    }
+
+    private void init() {
+        initApplicationParameters();
+        client = location.getCloudFoundryClient();
+        checkNotNull(client);
+    }
+
+    @SuppressWarnings("unchecked")
+    private void initApplicationParameters() {
+        List<String> list = ((List<String>) entity.getConfig(VanillaJavaApp.ARGS));
+        if ((list != null) && (list.size() > 1)) {
+            applicationPath = list.get(0);
+            applicationName = list.get(1);
+        } else {
+            log.warn("Malformed application parameters in {}, it is necessary specify at least " +
+                    "application name and application uri", new Object[]{this});
+        }
     }
 
     @Override
@@ -56,7 +93,7 @@ public class VanillaJavaAppCloudFoundryDriver implements VanillaJavaAppDriver {
 
     @Override
     public boolean isRunning() {
-        return false;
+        return isRunning;
     }
 
     @Override
@@ -66,7 +103,24 @@ public class VanillaJavaAppCloudFoundryDriver implements VanillaJavaAppDriver {
 
     @Override
     public void start() {
+        Staging stagin = new Staging();
+        List<String> applicationUris = new LinkedList<String>();
+        applicationUris.add(applicationPath);
+        client.createApplication(applicationName, stagin, DEFAULT_MEMORY, applicationUris, null);
+        checkApplicationDeployed();
+    }
 
+    private void checkApplicationDeployed() {
+        CloudApplication app = client.getApplication(applicationName);
+        if (app != null) {
+            changeRunningStatus(true);
+        } else {
+            changeRunningStatus(false);
+        }
+    }
+
+    private void changeRunningStatus(boolean isRunning) {
+        this.isRunning = isRunning;
     }
 
     @Override
