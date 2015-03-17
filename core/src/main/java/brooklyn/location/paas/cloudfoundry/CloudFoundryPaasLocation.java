@@ -19,30 +19,44 @@
 package brooklyn.location.paas.cloudfoundry;
 
 import brooklyn.config.ConfigKey;
-import brooklyn.location.Location;
+import brooklyn.entity.basic.ConfigKeys;
 import brooklyn.location.MachineDetails;
 import brooklyn.location.OsDetails;
 import brooklyn.location.basic.AbstractLocation;
+import brooklyn.util.net.Urls;
+import brooklyn.util.text.StringShortener;
+import brooklyn.util.text.Strings;
+import org.cloudfoundry.client.lib.CloudCredentials;
 import org.cloudfoundry.client.lib.CloudFoundryClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
 import java.net.InetAddress;
-import java.util.Collection;
-import java.util.Map;
+import java.net.URL;
 import java.util.Set;
 
 public class CloudFoundryPaasLocation extends AbstractLocation implements PaasLocation {
     public static final Logger LOG = LoggerFactory.getLogger(CloudFoundryPaasLocation.class);
 
-
+    public static ConfigKey<String> CF_USER = ConfigKeys.newStringConfigKey("user");
+    public static ConfigKey<String> CF_PASSWORD = ConfigKeys.newStringConfigKey("password");
+    public static ConfigKey<String> CF_ORG = ConfigKeys.newStringConfigKey("org");
+    public static ConfigKey<String> CF_ENDPOINT = ConfigKeys.newStringConfigKey("endpoint");
+    public static ConfigKey<String> CF_SPACE = ConfigKeys.newStringConfigKey("space");
 
     CloudFoundryClient client;
 
     public CloudFoundryPaasLocation(){
-        //CloudCredentials credentials = new CloudCredentials(USER, PASSWORD);
-        //client = new CloudFoundryClient(credentials, getTargetURL(ENDPOINT), ORG, SPACE, ALL_CERTS);
+        super();
+    }
+
+    @Override
+    public void init() {
+        super.init();
+
+        CloudCredentials credentials = new CloudCredentials(getConfig(CF_USER), getConfig(CF_PASSWORD));
+        client = new CloudFoundryClient(credentials, Urls.toUrl(getConfig(CF_ENDPOINT)), getConfig(CF_ORG), getConfig(CF_SPACE), true);
         client.login();
     }
 
@@ -74,86 +88,6 @@ public class CloudFoundryPaasLocation extends AbstractLocation implements PaasLo
 
     @Override
     public Set<String> getPrivateAddresses() {
-        return null;
-    }
-
-    @Override
-    public String getId() {
-        return null;
-    }
-
-    @Override
-    public String getDisplayName() {
-        return null;
-    }
-
-    @Override
-    public String getCatalogItemId() {
-        return null;
-    }
-
-    @Override
-    public TagSupport tags() {
-        return null;
-    }
-
-    @Override
-    public TagSupport getTagSupport() {
-        return null;
-    }
-
-    @Override
-    public Location getParent() {
-        return null;
-    }
-
-    @Override
-    public Collection<Location> getChildren() {
-        return null;
-    }
-
-    @Override
-    public void setParent(Location newParent) {
-
-    }
-
-    @Override
-    public String toVerboseString() {
-        return null;
-    }
-
-    @Override
-    public boolean containsLocation(Location potentialDescendent) {
-        return false;
-    }
-
-    @Override
-    public <T> T getConfig(ConfigKey<T> key) {
-        return null;
-    }
-
-    @Override
-    public <T> T getConfig(ConfigKey.HasConfigKey<T> key) {
-        return null;
-    }
-
-    @Override
-    public boolean hasConfig(ConfigKey<?> key, boolean includeInherited) {
-        return false;
-    }
-
-    @Override
-    public Map<String, Object> getAllConfig(boolean includeInherited) {
-        return null;
-    }
-
-    @Override
-    public boolean hasExtension(Class<?> extensionType) {
-        return false;
-    }
-
-    @Override
-    public <T> T getExtension(Class<T> extensionType) {
         return null;
     }
 }

@@ -63,6 +63,6 @@ public class CloudFoundryPaasLocationResolver extends AbstractPaasLocationResolv
         // TODO: TODO
 
         return managementContext.getLocationManager().createLocation(
-                LocationSpec.create(CloudFoundryPaasLocation.class).configure(locationFlags));
+                LocationSpec.create(locationFlags, CloudFoundryPaasLocation.class));
     }
 }
