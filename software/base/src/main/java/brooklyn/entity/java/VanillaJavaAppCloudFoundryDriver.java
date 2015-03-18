@@ -27,7 +27,9 @@ import org.cloudfoundry.client.lib.domain.Staging;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.LinkedList;
+import java.io.File;
+import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 
 import static com.google.common.base.Preconditions.checkNotNull;
@@ -40,6 +42,7 @@ public class VanillaJavaAppCloudFoundryDriver implements VanillaJavaAppDriver {
     private static final Logger log = LoggerFactory.getLogger(VanillaJavaAppCloudFoundryDriver.class);
 
     private static final int DEFAULT_MEMORY = 512; // MB
+    private final String BUILDPACK_URL = "https://github.com/cloudfoundry/java-buildpack.git";
 
     private final CloudFoundryPaasLocation location;
     private final ResourceUtils resource;
@@ -103,24 +106,42 @@ public class VanillaJavaAppCloudFoundryDriver implements VanillaJavaAppDriver {
 
     @Override
     public void start() {
-        Staging stagin = new Staging();
-        List<String> applicationUris = new LinkedList<String>();
-        applicationUris.add(applicationPath);
-        client.createApplication(applicationName, stagin, DEFAULT_MEMORY, applicationUris, null);
-        checkApplicationDeployed();
+        deployApplication();
+        updateIsRunning();
     }
 
-    private void checkApplicationDeployed() {
-        CloudApplication app = client.getApplication(applicationName);
-        if (app != null) {
-            changeRunningStatus(true);
-        } else {
-            changeRunningStatus(false);
+    private void deployApplication() {
+        List<String> serviceNames = null;
+        List<String> uris = new ArrayList<String>();
+        Staging staging;
+        File war;
+        try {
+            staging = new Staging(null, BUILDPACK_URL);
+            uris.add(getApplicationDomain(applicationName));
+            war = new File(applicationPath);
+
+            client.createApplication(applicationName, staging, DEFAULT_MEMORY, uris, serviceNames);
+            client.uploadApplication(applicationName, war.getCanonicalPath());
+            client.startApplication(applicationName);
+
+        } catch (IOException e) {
+            log.error("Error deploying application {} managed by driver {}",
+                    new Object[]{getEntity(), this});
         }
     }
 
-    private void changeRunningStatus(boolean isRunning) {
-        this.isRunning = isRunning;
+    private String getApplicationDomain(String name) {
+        String defaultDomainName = client.getDefaultDomain().getName();
+        return name + "-domain." + defaultDomainName;
+    }
+
+    private void updateIsRunning() {
+        CloudApplication app = client.getApplication(applicationName);
+        if (app != null) {
+            isRunning = true;
+        } else {
+            isRunning = false;
+        }
     }
 
     @Override
