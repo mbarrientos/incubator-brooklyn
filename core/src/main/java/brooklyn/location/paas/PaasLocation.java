@@ -16,10 +16,14 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package brooklyn.location.paas.cloudfoundry;
+package brooklyn.location.paas;
 
-import brooklyn.location.LocationResolver;
+import brooklyn.location.Location;
 
-public abstract class AbstractPaasLocationResolver implements LocationResolver {
+public interface PaasLocation extends Location {
 
+    public void setUpClient();
+
+    String getPaasProviderName();
 }
+
