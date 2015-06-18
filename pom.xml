@@ -631,6 +631,12 @@
                 <artifactId>jna-platform</artifactId>
                 <version>${jna.version}</version>
             </dependency>
+            
+            <dependency>
+                <groupId>org.apache.brooklyn</groupId>
+                <artifactId>brooklyn-location-cloudfoundry</artifactId>
+                <version>0.1.0-SNAPSHOT</version>
+            </dependency>
         </dependencies>
     </dependencyManagement>
 
@@ -1296,6 +1302,13 @@
             <modules>
                 <module>locations/jclouds</module>
             </modules>
+            <dependencies>
+                <dependency>
+                    <groupId>org.apache.brooklyn</groupId>
+                    <artifactId>brooklyn-location-cloudfoundry</artifactId>
+                    <version>0.1.0-SNAPSHOT</version>
+                </dependency>
+            </dependencies>
         </profile>
         <profile>
             <id>Entities</id>
